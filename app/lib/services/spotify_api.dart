@@ -64,8 +64,12 @@ class SpotifyApi {
 
   /// `GET /me/player`。204 は「停止中」として [PlaybackState.stopped] を返す。
   /// エラーにはしない（設計メモ §5）。
+  ///
+  /// market は付けない。`from_token` は `user-read-private` scope を要求する上
+  /// （[searchTracks] 参照）、ここの失敗はポーリング側で握り潰されるので
+  /// 黙って空のプレイヤーになる。user token なら省略で国が解決される。
   Future<PlaybackState> playbackState() async {
-    final response = await _send('GET', '/me/player', query: {'market': 'from_token'});
+    final response = await _send('GET', '/me/player');
     if (response.statusCode == 204 || response.data == null) {
       return PlaybackState.stopped;
     }
@@ -92,18 +96,17 @@ class SpotifyApi {
   }
 
   /// Development Mode では limit 上限 10、既定 5（設計メモ §6）。ページングが前提。
+  ///
+  /// **`market=from_token` を付けてはいけない。** この値は Spotify 側で
+  /// `user-read-private` scope を要求するため、付けると 403
+  /// `Insufficient client scope` になり検索が丸ごと失敗する。
+  /// user token で叩いている限り market を省略すればユーザーの国が使われる。
   Future<SearchPage> searchTracks(String query, {int offset = 0}) async {
     if (query.trim().isEmpty) return SearchPage.empty;
     final response = await _send(
       'GET',
       '/search',
-      query: {
-        'q': query,
-        'type': 'track',
-        'limit': 10,
-        'offset': offset,
-        'market': 'from_token',
-      },
+      query: {'q': query, 'type': 'track', 'limit': 10, 'offset': offset},
     );
     return SearchPage.fromJson(_asMap(response.data));
   }
