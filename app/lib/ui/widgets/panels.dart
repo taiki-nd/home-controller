@@ -474,36 +474,6 @@ class PlaylistsPanel extends StatelessWidget {
             ),
           ],
         ),
-        SizedBox(height: compact ? 10 : 12),
-        Container(
-          padding: EdgeInsets.symmetric(
-            horizontal: compact ? 14 : 16,
-            vertical: compact ? 6 : 7,
-          ),
-          decoration: BoxDecoration(
-            borderRadius: const BorderRadius.all(Radius.circular(14)),
-            color: AppColors.white(0.05),
-            border: Border.all(color: AppColors.white(0.09)),
-          ),
-          child: Row(
-            children: [
-              ShuffleSwitch(
-                value: controller.shuffleOn,
-                onChanged: controller.setShuffle,
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Text(
-                  controller.shuffleOn ? 'Shuffle on' : 'Shuffle off',
-                  style: AppText.body(
-                    compact ? 14 : 15,
-                    weight: FontWeight.w900,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
         SizedBox(height: compact ? 12 : 14),
         Expanded(
           child: !controller.playlistsLoaded
