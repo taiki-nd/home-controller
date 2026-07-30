@@ -332,6 +332,16 @@ class _Attribution extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
+              // デザインのこの位置は「1716 kbps」だったので、数字だけ置くと
+              // 音質表示に見えてしまう。音量だと分かるアイコンを必ず添える。
+              Icon(
+                volume == 0
+                    ? Icons.volume_off_rounded
+                    : Icons.volume_up_rounded,
+                size: compact ? 11 : 13,
+                color: AppColors.white(0.72),
+              ),
+              const SizedBox(width: 4),
               Text(
                 '$volume%',
                 style: AppText.grotesk(

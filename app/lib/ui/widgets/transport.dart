@@ -8,6 +8,10 @@ import 'atoms.dart';
 ///
 /// [PlayerController.progressTick] だけを購読して 500ms ごとに塗り替える。
 /// 全体を notifyListeners すると 2Hz でツリー全体が再ビルドされてしまう。
+///
+/// ただし 500ms の離散更新をそのまま幅に入れると、4 分の曲では 1 ティックあたり
+/// 0.2%（幅 340px で 0.7px）しか動かず「止まって見える」。バーだけ次のティック値へ
+/// 線形補間して、再ビルド頻度は 2Hz のまま描画を 60fps で滑らせる。
 class ProgressRow extends StatelessWidget {
   const ProgressRow({
     super.key,
@@ -40,8 +44,19 @@ class ProgressRow extends StatelessWidget {
                     Positioned.fill(
                       child: ColoredBox(color: AppColors.white(0.18)),
                     ),
-                    FractionallySizedBox(
-                      widthFactor: controller.progressFraction,
+                    TweenAnimationBuilder<double>(
+                      // ティック間隔と同じ長さで線形に詰めるので、
+                      // 描画は常に「1 ティック前 → 現在値」の途中を通る。
+                      tween: Tween<double>(
+                        begin: 0,
+                        end: controller.progressFraction,
+                      ),
+                      duration: const Duration(milliseconds: 500),
+                      curve: Curves.linear,
+                      builder: (context, value, child) => FractionallySizedBox(
+                        widthFactor: value,
+                        child: child,
+                      ),
                       child: const ColoredBox(color: Colors.white),
                     ),
                   ],
