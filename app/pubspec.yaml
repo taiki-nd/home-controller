@@ -1,0 +1,59 @@
+name: spotify_remote
+description: "自作 Spotify コントローラ。WiiM で鳴らし、みんなで次の曲を入れていく。"
+publish_to: 'none'
+
+# CFBundleShortVersionString / versionName は CI がタグから --build-name で上書きする。
+# ビルド番号は CI が github.run_number を --build-number で渡す。
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # OAuth 2.0 Authorization Code + PKCE（Implicit Grant は 2025-11 に廃止済み）
+  # **12.0.0 未満は使えない。** このアプリは UIScene を採用しており、
+  # コールバック URL は scene:openURLContexts: に配送される。11 以前の
+  # flutter_appauth は application:openURL:options: しか実装していないため
+  # URL がどこにも届かず、authorizeAndExchangeCode が永久に返ってこない。
+  flutter_appauth: ^12.0.2
+  # access_token / refresh_token の保管。PKCE はリフレッシュ毎に refresh_token が
+  # ローテーションするので、返ってきた値を必ず上書き保存する（AuthService 参照）。
+  flutter_secure_storage: ^9.2.4
+  # Web API クライアント。429 の Retry-After 尊重と 401 リフレッシュを interceptor で扱う。
+  dio: ^5.7.0
+  # アートワークから背景色を抽出する（Spotify デザインガイドライン上、
+  # アートワーク自体の改変はできないので「色を採るだけ」に留める）。
+  palette_generator: ^0.3.3+7
+  provider: ^6.1.2
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
+  fonts:
+    # デザイン（Spotify Controller.dc.html）で指定されている 2 書体。
+    # 実行時ダウンロードだとオフラインで崩れるため同梱する。
+    - family: ZenKakuGothicNew
+      fonts:
+        - asset: assets/fonts/ZenKakuGothicNew-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/ZenKakuGothicNew-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/ZenKakuGothicNew-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/ZenKakuGothicNew-Black.ttf
+          weight: 900
+    # Space Grotesk は可変フォント（wght 軸）でしか配布されていない。
+    # Flutter は fontWeight では可変軸を動かさないので、太さは
+    # AppText の fontVariations（FontVariation('wght', …)）側で指定する。
+    - family: SpaceGrotesk
+      fonts:
+        - asset: assets/fonts/SpaceGrotesk.ttf

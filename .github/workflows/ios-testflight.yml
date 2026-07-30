@@ -1,0 +1,228 @@
+name: iOS · upload to TestFlight
+
+# Runner.xcarchive をビルドして App Store Connect (TestFlight) にアップロードするところまで。
+# テスターへの配信は App Store Connect → TestFlight で手動。
+#
+# 署名方式: 手動署名 (manual signing)。
+#   - Apple Distribution 証明書(.p12)を一時キーチェーンに import
+#   - App Store 配布用プロビジョニングプロファイル(.mobileprovision)を事前に作成し secret で渡す
+#   - CODE_SIGN_STYLE=Manual で archive / export する（Apple 側を一切変更しない）
+# 自動署名 + API キー + -allowProvisioningUpdates は run のたびに Apple 側で証明書を
+# 生成しようとして上限(Distribution 証明書 2枚)に達し Archive が落ちるため使わない。
+# API キーは署名には使わず、TestFlight への altool アップロード認証にのみ使う。
+#
+# 必要な GitHub Secrets（Settings → Secrets and variables → Actions → Secrets）:
+#   IOS_DIST_CERT_P12_BASE64         Apple Distribution 証明書を .p12 に書き出し base64 化した文字列
+#                                    (`base64 -i dist.p12 | pbcopy`)
+#   IOS_DIST_CERT_PASSWORD           上記 .p12 のパスワード
+#   IOS_PROVISIONING_PROFILE_BASE64  app.home-ctl の App Store 配布用プロファイル
+#                                    (.mobileprovision) を base64 化した文字列
+#   APPSTORE_API_KEY_ID              App Store Connect API キーの Key ID（10文字）
+#   APPSTORE_API_ISSUER_ID           App Store Connect API の Issuer ID（UUID 形式）
+#   APPSTORE_API_KEY_P8_BASE64       API キー(.p8)を base64 化した文字列
+#   SPOTIFY_CLIENT_ID                Spotify Developer Dashboard の Client ID
+#                                    （secret ではないが、リポジトリに直書きしないため Secrets 経由）
+#
+# 前提（一度だけ手動で済ませておくこと）:
+#   - App Store Connect にアプリ(app.home-ctl)を作成済み
+#   - developer.apple.com → Certificates, IDs & Profiles で:
+#       1. Apple Distribution 証明書を用意し .p12 に書き出す
+#       2. App ID = app.home-ctl の "App Store" 配布プロファイルを作成しダウンロード
+#          （↑の Distribution 証明書に紐づくこと）
+#   - Spotify Developer Dashboard の Redirect URIs に
+#     app.home-ctl://callback を登録済み
+
+on:
+  push:
+    tags:
+      - 'ios-v*'         # 本番候補: TestFlight へ (例: ios-v1.0.0)
+      - 'ios-test-v*'    # 反復用: 中身は同じ。系統を分けるためのプレフィックス
+  workflow_dispatch:     # 手動実行も可
+
+concurrency:
+  group: ios-testflight-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    working-directory: app
+
+env:
+  FLUTTER_VERSION: '3.41.7'   # ローカルに合わせる
+  # CFBundleVersion(build number) に github.run_number を使う。既存 TestFlight ビルドと
+  # 衝突する場合のみ下駄を履かせる。
+  RUN_NUMBER_OFFSET: 0
+  DEVELOPMENT_TEAM: '8KZP24JYY2'
+  BUNDLE_ID: 'app.home-ctl'
+
+jobs:
+  # analyze / test は Dart 専用なので、×10 課金の macOS ではなく安い Linux で先に回す。
+  # deploy(macOS) はこのジョブ成功を needs にするので、test 失敗時に Archive を焼かずに止まる。
+  lint:
+    name: Analyze & test (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: flutter pub get
+        run: flutter pub get
+
+      - name: flutter analyze
+        run: flutter analyze
+
+      - name: flutter test
+        run: flutter test
+
+  deploy:
+    name: Build & upload to TestFlight
+    runs-on: macos-15
+    needs: lint
+    timeout-minutes: 45
+
+    env:
+      ASC_KEY_ID: ${{ secrets.APPSTORE_API_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.APPSTORE_API_ISSUER_ID }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: flutter pub get
+        run: flutter pub get
+
+      # analyze / test は lint ジョブ(Linux)で済ませているので macOS では再実行しない。
+
+      - name: Compute build number
+        id: ver
+        run: echo "build_number=$(( ${{ github.run_number }} + ${{ env.RUN_NUMBER_OFFSET }} ))" >> "$GITHUB_OUTPUT"
+
+      # ── コード署名素材の展開 ─────────────────────────────────────────────
+      - name: Import Apple Distribution certificate
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
+          p12-password: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+
+      - name: Write App Store Connect API key
+        # API キーは altool アップロード認証専用（署名には使わない）。
+        run: |
+          mkdir -p "$HOME/.appstoreconnect/private_keys"
+          echo "${{ secrets.APPSTORE_API_KEY_P8_BASE64 }}" | base64 --decode \
+            > "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+
+      # App Store 配布プロファイルを base64 secret から復元し、Xcode が探す場所に置く。
+      # 埋め込み plist から Name(=PROVISIONING_PROFILE_SPECIFIER)と UUID(=ファイル名)を取り出し、
+      # プロファイル名を後続ステップへ $PROFILE_NAME で受け渡す。
+      - name: Install App Store provisioning profile
+        run: |
+          PROFILE_PATH="$RUNNER_TEMP/appstore.mobileprovision"
+          echo "${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}" | base64 --decode > "$PROFILE_PATH"
+          security cms -D -i "$PROFILE_PATH" -o "$RUNNER_TEMP/profile.plist"
+          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$RUNNER_TEMP/profile.plist")
+          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c 'Print :Name' "$RUNNER_TEMP/profile.plist")
+          DEST="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$DEST"
+          cp "$PROFILE_PATH" "$DEST/$PROFILE_UUID.mobileprovision"
+          echo "PROFILE_NAME=$PROFILE_NAME" >> "$GITHUB_ENV"
+          echo "Installed provisioning profile: $PROFILE_NAME ($PROFILE_UUID)"
+
+      # タグ(ios-v1.0.1 / ios-test-v1.0.1)からバージョン名を取り出して --build-name に渡す。
+      # タグ以外の起動(workflow_dispatch)では pubspec.yaml の version: にフォールバックする。
+      - name: Derive version name from tag
+        id: vername
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            name="${GITHUB_REF_NAME##*v}"
+            echo "flag=--build-name=$name" >> "$GITHUB_OUTPUT"
+            echo "::notice::build-name をタグから設定: $name"
+          else
+            echo "flag=" >> "$GITHUB_OUTPUT"
+            echo "::notice::タグ以外の起動 → pubspec.yaml の version: を使用"
+          fi
+
+      # ── ビルド準備（pods + Generated.xcconfig + dart-defines）─────────────
+      # Client ID はここで埋め込む。PKCE なので client secret は存在しない。
+      - name: Prepare Flutter iOS build config
+        run: |
+          if [ -z "${{ secrets.SPOTIFY_CLIENT_ID }}" ]; then
+            echo "::error::SPOTIFY_CLIENT_ID secret が未設定です。ログインできないビルドになるため中断します。"
+            exit 1
+          fi
+          flutter precache --ios
+          flutter build ios --release --config-only ${{ steps.vername.outputs.flag }} \
+            --build-number=${{ steps.ver.outputs.build_number }} \
+            --dart-define=SPOTIFY_CLIENT_ID=${{ secrets.SPOTIFY_CLIENT_ID }}
+
+      - name: pod install
+        working-directory: app/ios
+        run: pod install
+
+      # ── アーカイブ（手動署名）─────────────────────────────────────────────
+      # ⚠️ 署名設定(CODE_SIGN_STYLE / CODE_SIGN_IDENTITY / PROVISIONING_PROFILE_SPECIFIER)を
+      # xcodebuild のコマンドライン引数で渡してはいけない。コマンドライン引数はワークスペース内の
+      # 全ターゲット(Pods 含む)に適用され、プロビジョニングプロファイルを持てない Pod ターゲットが
+      # "<pod> does not support provisioning profiles" で Archive FAILED になる。
+      # そのため署名設定は Runner ターゲットの project.pbxproj 側(Release config)に持たせ、
+      # ここでは Runner だけが参照する独自変数 PROFILE_NAME を渡す。
+      - name: Archive
+        run: |
+          xcodebuild archive \
+            -workspace ios/Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/Runner.xcarchive \
+            PROFILE_NAME="$PROFILE_NAME"
+
+      # ── .ipa にエクスポート（手動署名）──────────────────────────────────────
+      - name: Export .ipa
+        run: |
+          /usr/libexec/PlistBuddy \
+            -c "Set :provisioningProfiles:${BUNDLE_ID} $PROFILE_NAME" \
+            ios/ExportOptions.plist
+          xcodebuild -exportArchive \
+            -archivePath build/Runner.xcarchive \
+            -exportPath build/ipa \
+            -exportOptionsPlist ios/ExportOptions.plist
+
+      # 失敗時のデバッグ用。アーティファクト容量オーバー等で落ちても配信をブロックしない。
+      - name: Upload .ipa artifact
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: spotify-remote-ipa
+          path: app/build/ipa/*.ipa
+          if-no-files-found: ignore
+
+      # ── TestFlight へアップロード ────────────────────────────────────────
+      - name: Upload to TestFlight
+        run: |
+          IPA="$(ls build/ipa/*.ipa | head -1)"
+          echo "Uploading: $IPA"
+          xcrun altool --upload-app \
+            -f "$IPA" \
+            -t ios \
+            --apiKey "$ASC_KEY_ID" \
+            --apiIssuer "$ASC_ISSUER_ID"

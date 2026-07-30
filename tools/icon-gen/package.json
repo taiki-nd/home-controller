@@ -1,0 +1,15 @@
+{
+  "name": "home-ctl-icon-gen",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "「home.ctl」ワードマークからアプリアイコンを生成する (SVG → PNG)",
+  "scripts": {
+    "preview": "node icon.mjs wordmark",
+    "build": "node icon.mjs build"
+  },
+  "dependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "pngjs": "^7.0.0"
+  }
+}

@@ -1,0 +1,50 @@
+# 署名まわり（.p8 / .mobileprovision）。絶対にコミットしない。
+auth/*
+
+# アイコン生成ツール。node_modules と中間生成物は再生成できるので追跡しない
+# (アイコン本体 = app/ios・app/android 配下の PNG はコミットする)。
+node_modules/
+tools/icon-gen/preview/
+tools/icon-gen/out/
+
+# ── Flutter / Dart ───────────────────────────────────────────────────────
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+build/
+**/doc/api/
+app.*.symbols
+app.*.map.json
+
+# ── iOS / Xcode ──────────────────────────────────────────────────────────
+# Pods と Generated.xcconfig は `pod install` / `flutter build --config-only`
+# で再生成される（makefile の ios-build 参照）。Podfile.lock は追跡する。
+**/ios/Pods/
+**/ios/.symlinks/
+**/ios/Flutter/Generated.xcconfig
+**/ios/Flutter/flutter_export_environment.sh
+**/ios/Flutter/App.framework
+**/ios/Flutter/Flutter.framework
+**/ios/Flutter/Flutter.podspec
+**/ios/Flutter/ephemeral/
+**/ios/Flutter/flutter_assets/
+**/ios/Flutter/.last_build_id
+**/ios/**/xcuserdata/
+**/ios/**/DerivedData/
+**/ios/**/*.pbxuser
+**/ios/**/*.moved-aside
+**/ios/ServiceDefinitions.json
+
+# ── Android ──────────────────────────────────────────────────────────────
+**/android/.gradle/
+**/android/captures/
+**/android/local.properties
+**/android/key.properties
+*.jks
+
+# ── エディタ / OS ────────────────────────────────────────────────────────
+*.iml
+.idea/
+.vscode/
+.DS_Store
+*.log
