@@ -44,20 +44,28 @@ class ProgressRow extends StatelessWidget {
                     Positioned.fill(
                       child: ColoredBox(color: AppColors.white(0.18)),
                     ),
-                    TweenAnimationBuilder<double>(
-                      // ティック間隔と同じ長さで線形に詰めるので、
-                      // 描画は常に「1 ティック前 → 現在値」の途中を通る。
-                      tween: Tween<double>(
-                        begin: 0,
-                        end: controller.progressFraction,
+                    // Positioned.fill でバーの高さを渡さないと、Stack が
+                    // 非配置の子に緩い制約を渡すので ColoredBox が高さ 0 に
+                    // 潰れて塗りが消える（＝背景のグレーだけが見える）。
+                    Positioned.fill(
+                      child: TweenAnimationBuilder<double>(
+                        // ティック間隔と同じ長さで線形に詰めるので、
+                        // 描画は常に「1 ティック前 → 現在値」の途中を通る。
+                        tween: Tween<double>(
+                          begin: 0,
+                          end: controller.progressFraction,
+                        ),
+                        duration: const Duration(milliseconds: 500),
+                        curve: Curves.linear,
+                        builder: (context, value, child) =>
+                            FractionallySizedBox(
+                              // 既定の center だと塗りが中央から左右に伸びる。
+                              alignment: Alignment.centerLeft,
+                              widthFactor: value,
+                              child: child,
+                            ),
+                        child: const ColoredBox(color: Colors.white),
                       ),
-                      duration: const Duration(milliseconds: 500),
-                      curve: Curves.linear,
-                      builder: (context, value, child) => FractionallySizedBox(
-                        widthFactor: value,
-                        child: child,
-                      ),
-                      child: const ColoredBox(color: Colors.white),
                     ),
                   ],
                 ),
