@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help app-run app-run-ipad app-analyze app-test app-clean app-doctor \
+.PHONY: help app-run app-run-ipad app-mock app-analyze app-test app-clean app-doctor \
         ios-build ios-archive ios-export ios-upload ios-ship \
         icons-install icons-preview icons-adaptive-preview icons-build icons-play icons-font
 
@@ -25,6 +25,16 @@ help: ## このヘルプを表示
 
 app-run: ## 実機/シミュレータで起動 (例: make app-run SPOTIFY_CLIENT_ID=xxxx)
 	cd app && flutter run $(DART_DEFINES)
+
+# Spotify にはつながない。偽の再生状態でデザインだけ見るための入口
+# (app/lib/main_mock.dart)。上部バーで枠を切り替えられる。
+MOCK_PORT ?= 5860
+DEVICE    ?=
+
+app-mock: ## モックデータでデザインをブラウザ表示 (例: make app-mock DEVICE=iphone|ipad)
+	cd app && flutter run -d chrome -t lib/main_mock.dart \
+		--web-port=$(MOCK_PORT) \
+		--web-launch-url "http://localhost:$(MOCK_PORT)/?device=$(DEVICE)"
 
 app-analyze: ## flutter analyze
 	cd app && flutter analyze
