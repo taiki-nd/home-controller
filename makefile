@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help app-run app-run-ipad app-mock app-analyze app-test app-clean app-doctor \
+.PHONY: help app-run app-run-ipad app-web app-web-build app-mock app-analyze app-test app-clean app-doctor \
         ios-build ios-archive ios-export ios-upload ios-ship \
         icons-install icons-preview icons-adaptive-preview icons-build icons-play icons-font
 
@@ -25,6 +25,23 @@ help: ## このヘルプを表示
 
 app-run: ## 実機/シミュレータで起動 (例: make app-run SPOTIFY_CLIENT_ID=xxxx)
 	cd app && flutter run $(DART_DEFINES)
+
+# 実アプリ (lib/main.dart) をブラウザで動かす。
+#   **サインインは web では動かない。** flutter_appauth に web 実装が無く
+#   (android/ios/macos のみ)、redirect が app.home-ctl:// のカスタムスキームな
+#   ため、ログインボタンを押すと MissingPluginException になる。
+#   したがって web で見られるのはログイン画面まで。再生画面のデザインを見たい
+#   ときは app-mock を使う。
+# WEB_HOSTNAME=0.0.0.0 にすると同じ LAN の iPad などからも開ける。
+WEB_PORT     ?= 5850
+WEB_HOSTNAME ?= localhost
+
+app-web: ## 実アプリを Chrome で起動 (例: make app-web SPOTIFY_CLIENT_ID=xxxx)
+	cd app && flutter run -d chrome \
+		--web-port=$(WEB_PORT) --web-hostname=$(WEB_HOSTNAME) $(DART_DEFINES)
+
+app-web-build: ## web を app/build/web にビルド (Wasm は非対応なので既定の JS ビルド)
+	cd app && flutter build web $(DART_DEFINES)
 
 # Spotify にはつながない。偽の再生状態でデザインだけ見るための入口
 # (app/lib/main_mock.dart)。上部バーで枠を切り替えられる。

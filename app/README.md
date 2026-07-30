@@ -15,6 +15,19 @@ make app-run SPOTIFY_CLIENT_ID=xxxxxxxx   # リポジトリルートから
 
 渡さない場合はログイン画面が設定手順の案内に変わる（クラッシュはしない）。
 
+ブラウザで動かすなら:
+
+```sh
+make app-web                        # Chrome で http://localhost:5850
+make app-web WEB_HOSTNAME=0.0.0.0   # 同じ LAN の iPad などからも開ける
+make app-web-build                  # app/build/web に出す
+```
+
+ただし **web ではサインインできない**。`flutter_appauth` に web 実装が無く
+（android / ios / macos のみ）、redirect も `app.home-ctl://` のカスタムスキーム
+なので、ログインボタンを押すと `MissingPluginException` になる。web で見られる
+のはログイン画面まで。再生画面を触りたいときは下の `app-mock` を使う。
+
 ## デザインを見る（Spotify につながない）
 
 実機も Client ID も要らない。偽の再生状態を積んだ `lib/main_mock.dart` を
