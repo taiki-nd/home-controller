@@ -51,7 +51,8 @@ env:
   FLUTTER_VERSION: '3.41.7'   # ローカルに合わせる
   # CFBundleVersion(build number) に github.run_number を使う。既存 TestFlight ビルドと
   # 衝突する場合のみ下駄を履かせる。
-  RUN_NUMBER_OFFSET: 0
+  # build 1〜3 は手動アップロード済みなので、CI 初回(run_number=1)が 4 になるよう下駄を履かせる。
+  RUN_NUMBER_OFFSET: 3
   DEVELOPMENT_TEAM: '8KZP24JYY2'
   BUNDLE_ID: 'app.home-ctl'
 
