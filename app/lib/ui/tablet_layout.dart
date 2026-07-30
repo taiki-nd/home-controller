@@ -7,6 +7,7 @@ import '../state/player_controller.dart';
 import '../theme/tokens.dart';
 import 'widgets/atoms.dart';
 import 'widgets/marquee_text.dart';
+import 'widgets/orbiting_light.dart';
 import 'widgets/panels.dart';
 import 'widgets/swipe_skip.dart';
 import 'widgets/transport.dart';
@@ -109,22 +110,23 @@ class _NowPlayingPane extends StatelessWidget {
                     enabled: !controller.deviceLost,
                     onNext: controller.skipNext,
                     onPrevious: controller.skipPrevious,
-                    child: Artwork(
-                      url: track?.artworkUrl,
+                    child: OrbitingLight(
                       size: artSize.toDouble(),
-                      opacity: stopped ? 0.4 : 1.0,
-                      placeholderColors: [
-                        controller.palette.deep,
+                      active: controller.isPlaying,
+                      tint: Color.lerp(
                         controller.palette.accent,
-                      ],
-                      shadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.9),
-                          blurRadius: 100,
-                          spreadRadius: -28,
-                          offset: const Offset(0, 50),
-                        ),
-                      ],
+                        Colors.white,
+                        0.45,
+                      )!,
+                      child: Artwork(
+                        url: track?.artworkUrl,
+                        size: artSize.toDouble(),
+                        opacity: stopped ? 0.4 : 1.0,
+                        placeholderColors: [
+                          controller.palette.deep,
+                          controller.palette.accent,
+                        ],
+                      ),
                     ),
                   ),
                 ),
