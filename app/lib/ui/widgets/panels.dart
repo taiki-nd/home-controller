@@ -4,6 +4,7 @@ import '../../models/spotify_models.dart';
 import '../../state/player_controller.dart';
 import '../../theme/tokens.dart';
 import 'atoms.dart';
+import 'marquee_text.dart';
 
 /// 「Up next」。`GET /me/player/queue` の返り値をそのまま並べるだけ（設計メモ §4）。
 class QueuePanel extends StatelessWidget {
@@ -462,10 +463,8 @@ class PlaylistsPanel extends StatelessWidget {
             ),
             const SizedBox(width: 8),
             Expanded(
-              child: Text(
+              child: MarqueeText(
                 controller.contextLabel,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
                 style: AppText.body(
                   compact ? 11 : 12,
                   color: AppColors.white(0.42),

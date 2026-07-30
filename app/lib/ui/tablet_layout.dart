@@ -6,7 +6,9 @@ import '../models/spotify_models.dart';
 import '../state/player_controller.dart';
 import '../theme/tokens.dart';
 import 'widgets/atoms.dart';
+import 'widgets/marquee_text.dart';
 import 'widgets/panels.dart';
+import 'widgets/swipe_skip.dart';
 import 'widgets/transport.dart';
 
 /// iPad 横（デザインは 1194x834）。
@@ -76,22 +78,28 @@ class _NowPlayingPane extends StatelessWidget {
               ),
               Expanded(
                 child: Center(
-                  child: Artwork(
-                    url: track?.artworkUrl,
+                  child: SwipeSkip(
                     size: artSize.toDouble(),
-                    opacity: stopped ? 0.4 : 1.0,
-                    placeholderColors: [
-                      controller.palette.deep,
-                      controller.palette.accent,
-                    ],
-                    shadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.9),
-                        blurRadius: 100,
-                        spreadRadius: -28,
-                        offset: const Offset(0, 50),
-                      ),
-                    ],
+                    enabled: !controller.deviceLost,
+                    onNext: controller.skipNext,
+                    onPrevious: controller.skipPrevious,
+                    child: Artwork(
+                      url: track?.artworkUrl,
+                      size: artSize.toDouble(),
+                      opacity: stopped ? 0.4 : 1.0,
+                      placeholderColors: [
+                        controller.palette.deep,
+                        controller.palette.accent,
+                      ],
+                      shadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.9),
+                          blurRadius: 100,
+                          spreadRadius: -28,
+                          offset: const Offset(0, 50),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -102,10 +110,10 @@ class _NowPlayingPane extends StatelessWidget {
                 color: AppColors.white(0.55),
               ),
               const SizedBox(height: 10),
-              Text(
+              // 3 行ぶんの高さが曲によらず一定になるので、上の Expanded の取り分＝
+              // アートワークの位置も動かない。
+              MarqueeText(
                 track?.name ?? '再生していません',
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
                 style: AppText.body(
                   50,
                   weight: FontWeight.w900,
@@ -114,10 +122,8 @@ class _NowPlayingPane extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 8),
-              Text(
+              MarqueeText(
                 track?.artists ?? '',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
                 style: AppText.body(
                   24,
                   weight: FontWeight.w700,
@@ -125,10 +131,8 @@ class _NowPlayingPane extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 6),
-              Text(
+              MarqueeText(
                 track?.albumName ?? '',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
                 style: AppText.body(15, color: AppColors.white(0.42)),
               ),
             ],

@@ -7,13 +7,27 @@ import 'package:spotify_remote/state/player_controller.dart';
 import 'package:spotify_remote/theme/tokens.dart';
 import 'package:spotify_remote/ui/phone_layout.dart';
 import 'package:spotify_remote/ui/tablet_layout.dart';
+import 'package:spotify_remote/ui/widgets/atoms.dart';
 
 /// 実際に鳴っている状態を再現する差し替え API。
 /// artworkUrl は null にしてある（テスト環境で Image.network を踏ませないため）。
 class _FakeApi extends SpotifyApi {
-  _FakeApi({required this.playing}) : super(AuthService());
+  _FakeApi({required this.playing, this.title = 'Midnight City'})
+    : super(AuthService());
 
   final bool playing;
+
+  /// 曲名の長さでレイアウトが動かないことを見るために差し替えられるようにしてある。
+  final String title;
+
+  /// 曲送りの呼び出し記録（'next' / 'previous'）。
+  final List<String> commands = [];
+
+  @override
+  Future<void> next() async => commands.add('next');
+
+  @override
+  Future<void> previous() async => commands.add('previous');
 
   static Track _track(String id, String name, String artist) => Track(
     id: id,
@@ -32,7 +46,7 @@ class _FakeApi extends SpotifyApi {
       progressMs: 62000,
       shuffleState: false,
       hasContent: true,
-      track: _track('cur', 'Midnight City', 'M83'),
+      track: _track('cur', title, 'M83'),
       device: const SpotifyDevice(
         id: 'wiim',
         name: 'WiiM Ultra',
@@ -83,8 +97,12 @@ class _FakeApi extends SpotifyApi {
 Future<PlayerController> buildController(
   WidgetTester tester, {
   required bool playing,
+  String title = 'Midnight City',
+  SpotifyApi? api,
 }) async {
-  final controller = PlayerController(_FakeApi(playing: playing));
+  final controller = PlayerController(
+    api ?? _FakeApi(playing: playing, title: title),
+  );
   addTearDown(controller.dispose);
   await controller.start();
   // start() が 1 秒間隔のポーリングと 500ms の進捗ティッカーを仕込むので、
@@ -159,6 +177,187 @@ void main() {
     // シートは閉じているので NEXT UP の 1 行プレビューだけ出る。
     expect(find.text('Get Lucky'), findsOneWidget);
     expect(find.text('+3'), findsOneWidget);
+  });
+
+  // 曲名は長さが読めない。折り返して 2 行になると、その下敷きにしている
+  // アートワークの位置が曲ごとにズレる。1 行固定 + 横流しにした狙いはここ。
+  const longTitle =
+      'Everything In Its Right Place - Extended Instrumental Mix (Remastered 2026)';
+
+  /// 大判アートワーク（キューのサムネイルではない方）の矩形。
+  Rect artRect(WidgetTester tester) => tester.getRect(
+    find.byWidgetPredicate((w) => w is Artwork && w.size > 200),
+  );
+
+  Future<Rect> artRectFor(
+    WidgetTester tester,
+    Size size, {
+    required String title,
+    required bool phone,
+  }) async {
+    tester.view.physicalSize = size;
+    tester.view.devicePixelRatio = 1;
+    final controller = await buildController(
+      tester,
+      playing: true,
+      title: title,
+    );
+    await tester.pumpWidget(
+      wrap(
+        phone
+            ? PhoneLayout(
+                controller: controller,
+                onPlayNow: (_) {},
+                onPlayPlaylist: (_) {},
+                attribution: const SizedBox.shrink(),
+                topInset: 0,
+              )
+            : TabletLayout(
+                controller: controller,
+                onPlayNow: (_) {},
+                onPlayPlaylist: (_) {},
+                attribution: const SizedBox.shrink(),
+              ),
+        size,
+      ),
+    );
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    return artRect(tester);
+  }
+
+  testWidgets('iPad: 曲名が長くてもアートワークの位置が変わらない', (tester) async {
+    addTearDown(tester.view.reset);
+
+    final short = await artRectFor(
+      tester,
+      ipad,
+      title: 'Midnight City',
+      phone: false,
+    );
+    final long = await artRectFor(tester, ipad, title: longTitle, phone: false);
+
+    expect(long, short);
+    // 長い方は流れるテキストになっている（= 折り返していない）。
+    expect(find.text(longTitle), findsOneWidget);
+  });
+
+  testWidgets('iPhone: 曲名が長くてもアートワークの位置が変わらない', (tester) async {
+    addTearDown(tester.view.reset);
+
+    final short = await artRectFor(
+      tester,
+      iphone,
+      title: 'Midnight City',
+      phone: true,
+    );
+    final long = await artRectFor(
+      tester,
+      iphone,
+      title: longTitle,
+      phone: true,
+    );
+
+    expect(long, short);
+    expect(find.text(longTitle), findsOneWidget);
+  });
+
+  /// カバー画像を [dx] ぶん払う。速度が乗って弾き判定にならないよう小刻みに動かす。
+  Future<void> swipeArtwork(WidgetTester tester, double dx) async {
+    final gesture = await tester.startGesture(artRect(tester).center);
+    for (var i = 0; i < 6; i++) {
+      await gesture.moveBy(Offset(dx / 6, 0));
+      await tester.pump(const Duration(milliseconds: 40));
+    }
+    await gesture.up();
+    // skipNext() は 400ms 待ってから再ポーリングするので、そのぶん進めておく。
+    await tester.pump(const Duration(milliseconds: 600));
+  }
+
+  testWidgets('iPhone: カバー画像を左に払うと次の曲へ', (tester) async {
+    tester.view.physicalSize = iphone;
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final api = _FakeApi(playing: true);
+    final controller = await buildController(tester, playing: true, api: api);
+    await tester.pumpWidget(
+      wrap(
+        PhoneLayout(
+          controller: controller,
+          onPlayNow: (_) {},
+          onPlayPlaylist: (_) {},
+          attribution: const SizedBox.shrink(),
+          topInset: 0,
+        ),
+        iphone,
+      ),
+    );
+    await tester.pump();
+
+    final before = artRect(tester);
+    await swipeArtwork(tester, -120);
+    expect(api.commands, ['next']);
+
+    // 払い終わったらカバーは元の位置に戻る（脈打つドットが止まらないので
+    // pumpAndSettle は使えない。出入りのアニメより長く進めるだけにする）。
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(artRect(tester), before);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('iPad: カバー画像を右に払うと前の曲へ', (tester) async {
+    tester.view.physicalSize = ipad;
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final api = _FakeApi(playing: true);
+    final controller = await buildController(tester, playing: true, api: api);
+    await tester.pumpWidget(
+      wrap(
+        TabletLayout(
+          controller: controller,
+          onPlayNow: (_) {},
+          onPlayPlaylist: (_) {},
+          attribution: const SizedBox.shrink(),
+        ),
+        ipad,
+      ),
+    );
+    await tester.pump();
+
+    await swipeArtwork(tester, 160);
+    expect(api.commands, ['previous']);
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('カバー画像を少しだけ動かしたら曲送りしない', (tester) async {
+    tester.view.physicalSize = iphone;
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final api = _FakeApi(playing: true);
+    final controller = await buildController(tester, playing: true, api: api);
+    await tester.pumpWidget(
+      wrap(
+        PhoneLayout(
+          controller: controller,
+          onPlayNow: (_) {},
+          onPlayPlaylist: (_) {},
+          attribution: const SizedBox.shrink(),
+          topInset: 0,
+        ),
+        iphone,
+      ),
+    );
+    await tester.pump();
+
+    // アートは 342px なのでしきい値は 47px。タッチスロップを引いて 20px 弱。
+    await swipeArtwork(tester, -38);
+    expect(api.commands, isEmpty);
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('停止中(204)は「停止中」の状態表示になる', (tester) async {

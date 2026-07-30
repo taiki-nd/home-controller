@@ -6,7 +6,9 @@ import '../models/spotify_models.dart';
 import '../state/player_controller.dart';
 import '../theme/tokens.dart';
 import 'widgets/atoms.dart';
+import 'widgets/marquee_text.dart';
 import 'widgets/panels.dart';
+import 'widgets/swipe_skip.dart';
 import 'widgets/transport.dart';
 
 /// スマホ（デザインは 390x844）。
@@ -116,29 +118,33 @@ class _NowPlaying extends StatelessWidget {
               ),
               const SizedBox(height: 22),
               Center(
-                child: Artwork(
-                  url: track?.artworkUrl,
+                child: SwipeSkip(
                   size: artSize.toDouble(),
-                  opacity: stopped ? 0.4 : 1.0,
-                  placeholderColors: [
-                    controller.palette.deep,
-                    controller.palette.accent,
-                  ],
-                  shadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.85),
-                      blurRadius: 70,
-                      spreadRadius: -24,
-                      offset: const Offset(0, 36),
-                    ),
-                  ],
+                  enabled: !controller.deviceLost,
+                  onNext: controller.skipNext,
+                  onPrevious: controller.skipPrevious,
+                  child: Artwork(
+                    url: track?.artworkUrl,
+                    size: artSize.toDouble(),
+                    opacity: stopped ? 0.4 : 1.0,
+                    placeholderColors: [
+                      controller.palette.deep,
+                      controller.palette.accent,
+                    ],
+                    shadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.85),
+                        blurRadius: 70,
+                        spreadRadius: -24,
+                        offset: const Offset(0, 36),
+                      ),
+                    ],
+                  ),
                 ),
               ),
               const SizedBox(height: 24),
-              Text(
+              MarqueeText(
                 track?.name ?? '再生していません',
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
                 style: AppText.body(
                   30,
                   weight: FontWeight.w900,
@@ -147,10 +153,8 @@ class _NowPlaying extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 6),
-              Text(
+              MarqueeText(
                 track?.artists ?? '',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
                 style: AppText.body(
                   18,
                   weight: FontWeight.w700,
