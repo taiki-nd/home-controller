@@ -28,8 +28,13 @@ class PhoneLayout extends StatelessWidget {
   final ValueChanged<PlaylistSummary> onPlayPlaylist;
   final Widget attribution;
 
-  /// 停止バナーの高さぶん、コンテンツを押し下げる。
+  /// ステータスバー + 停止バナーぶん、コンテンツを押し下げる。
+  /// 呼ぶ側が SafeArea を掛けないので、上の余白はここで確保する。
   final double topInset;
+
+  /// デバイスピルの点の x（左余白 24 + ピルの左パディング 14）。
+  /// ポップオーバーの点をこの列に載せるので、余白を触ったらここも直す。
+  static const devicePillDotX = 38.0;
 
   static const _sheetClosedHeight = 116.0;
 
@@ -37,8 +42,10 @@ class PhoneLayout extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
+        // 割合はステータスバーを除いた「中身が使える高さ」に掛ける。
+        // 全高に掛けると、上に隠れている帯のぶんシートが伸びる。
         final sheetHeight = controller.sheetOpen
-            ? constraints.maxHeight * 0.78
+            ? (constraints.maxHeight - topInset) * 0.78
             : _sheetClosedHeight;
 
         return Stack(
@@ -193,11 +200,14 @@ class _DevicePill extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           Flexible(
-            child: Text(
-              controller.deviceLabel,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: AppText.body(13, weight: FontWeight.w700),
+            child: CapCentered(
+              fontSize: 13,
+              child: Text(
+                controller.deviceLabel,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppText.body(13, weight: FontWeight.w700),
+              ),
             ),
           ),
         ],

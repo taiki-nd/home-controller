@@ -58,6 +58,22 @@ class _ControllerScreenState extends State<ControllerScreen>
         final stopped = controller.isStopped;
         final palette = controller.palette;
 
+        // ステータスバー（時刻・バッテリー）の帯。SafeArea で画面ごと下げると
+        // この帯が背景グラデ 1 枚になり、左のアートワーク面と右のレールが
+        // 帯の中で切れずにつながってしまう。レール側は天まで塗りたいので、
+        // 画面は全面のまま、中身だけこのぶん下げる。
+        final topPad = MediaQuery.paddingOf(context).top;
+        // 停止バナーは自前でステータスバーぶんまで塗るので、出ている間は
+        // 帯の高さもバナーが持つ。中身はさらにバナーの高さだけ下がる。
+        final contentTop =
+            topPad + (controller.showStoppedBanner ? StoppedBanner.height : 0);
+
+        // デバイス一覧の緑の点は、開く前に見えているピルの点の真下に来ないと
+        // 横にずれて見える。ピル側の x から逆算して置く。
+        final popoverLeft = DevicePopover.leftForPillDotX(
+          wide ? TabletLayout.devicePillDotX : PhoneLayout.devicePillDotX,
+        );
+
         // 停止中は配色を落として「鳴っていない」ことを画面全体で示す。
         final gradient = stopped
             ? const LinearGradient(
@@ -104,132 +120,120 @@ class _ControllerScreenState extends State<ControllerScreen>
                           ],
                         ),
                 ),
-                child: SafeArea(
-                  bottom: false,
-                  child: Stack(
-                    children: [
-                      Positioned.fill(
-                        child: wide
-                            ? Padding(
-                                padding: EdgeInsets.only(
-                                  top: controller.showStoppedBanner
-                                      ? StoppedBanner.height
-                                      : 0,
-                                ),
-                                child: TabletLayout(
-                                  controller: controller,
-                                  onPlayNow: _askPlayNow,
-                                  onPlayPlaylist: _askPlaylist,
-                                  attribution: _Attribution(
-                                    controller: controller,
-                                    onLongPress: _confirmSignOut,
-                                  ),
-                                ),
-                              )
-                            : PhoneLayout(
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: wide
+                          ? TabletLayout(
+                              controller: controller,
+                              onPlayNow: _askPlayNow,
+                              onPlayPlaylist: _askPlaylist,
+                              topInset: contentTop,
+                              attribution: _Attribution(
                                 controller: controller,
-                                onPlayNow: _askPlayNow,
-                                onPlayPlaylist: _askPlaylist,
-                                topInset: controller.showStoppedBanner
-                                    ? StoppedBanner.height
-                                    : 0,
-                                attribution: _Attribution(
-                                  controller: controller,
-                                  onLongPress: _confirmSignOut,
-                                  compact: true,
-                                ),
+                                onLongPress: _confirmSignOut,
                               ),
+                            )
+                          : PhoneLayout(
+                              controller: controller,
+                              onPlayNow: _askPlayNow,
+                              onPlayPlaylist: _askPlaylist,
+                              topInset: contentTop,
+                              attribution: _Attribution(
+                                controller: controller,
+                                onLongPress: _confirmSignOut,
+                                compact: true,
+                              ),
+                            ),
+                    ),
+
+                    if (controller.showStoppedBanner)
+                      Positioned(
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        child: StoppedBanner(
+                          onResume: () =>
+                              controller.openSheet(RailTab.search),
+                        ),
                       ),
 
-                      if (controller.showStoppedBanner)
-                        Positioned(
-                          top: 0,
-                          left: 0,
-                          right: 0,
-                          child: StoppedBanner(
-                            onResume: () =>
-                                controller.openSheet(RailTab.search),
-                          ),
+                    if (controller.errorBanner != null)
+                      Positioned(
+                        top: contentTop,
+                        left: 0,
+                        right: 0,
+                        child: ErrorBanner(
+                          message: controller.errorBanner!,
+                          onDismiss: controller.dismissError,
                         ),
+                      ),
 
-                      if (controller.errorBanner != null)
-                        Positioned(
-                          top: controller.showStoppedBanner
-                              ? StoppedBanner.height
-                              : 0,
-                          left: 0,
-                          right: 0,
-                          child: ErrorBanner(
-                            message: controller.errorBanner!,
-                            onDismiss: controller.dismissError,
-                          ),
+                    if (controller.devicesOpen)
+                      Positioned(
+                        top: contentTop + (wide ? 86 : 100),
+                        left: popoverLeft,
+                        // スマホは左右対称に伸ばす。
+                        right: wide ? null : popoverLeft,
+                        child: DevicePopover(
+                          devices: controller.devices,
+                          activeDeviceId: controller.activeDevice?.id,
+                          onPick: controller.pickDevice,
+                          onRescan: controller.rescanDevices,
+                          width: wide ? 340 : double.infinity,
                         ),
+                      ),
 
-                      if (controller.devicesOpen)
-                        Positioned(
-                          top: wide ? 86 : 100,
-                          left: wide ? 40 : 18,
-                          right: wide ? null : 18,
-                          child: DevicePopover(
-                            devices: controller.devices,
-                            activeDeviceId: controller.activeDevice?.id,
-                            onPick: controller.pickDevice,
-                            onRescan: controller.rescanDevices,
-                            width: wide ? 340 : double.infinity,
-                          ),
+                    if (controller.deviceLost)
+                      Positioned.fill(
+                        child: NoDeviceOverlay(
+                          onRescan: controller.rescanDevices,
+                          onDismiss: controller.dismissNoDevice,
                         ),
+                      ),
 
-                      if (controller.deviceLost)
-                        Positioned.fill(
-                          child: NoDeviceOverlay(
-                            onRescan: controller.rescanDevices,
-                            onDismiss: controller.dismissNoDevice,
-                          ),
+                    if (_pendingPlayNow != null)
+                      Positioned.fill(
+                        child: PlayNowConfirm(
+                          track: _pendingPlayNow!,
+                          queueCount: controller.upNext.length,
+                          onConfirm: () {
+                            final track = _pendingPlayNow!;
+                            setState(() => _pendingPlayNow = null);
+                            controller.playNow(track);
+                          },
+                          onCancel: () =>
+                              setState(() => _pendingPlayNow = null),
                         ),
+                      ),
 
-                      if (_pendingPlayNow != null)
-                        Positioned.fill(
-                          child: PlayNowConfirm(
-                            track: _pendingPlayNow!,
-                            queueCount: controller.upNext.length,
-                            onConfirm: () {
-                              final track = _pendingPlayNow!;
-                              setState(() => _pendingPlayNow = null);
-                              controller.playNow(track);
-                            },
-                            onCancel: () =>
-                                setState(() => _pendingPlayNow = null),
-                          ),
+                    if (_pendingPlaylist != null)
+                      Positioned.fill(
+                        child: PlaylistConfirm(
+                          playlist: _pendingPlaylist!,
+                          queueCount: controller.upNext.length,
+                          initialShuffle: controller.shuffleOn,
+                          onConfirm: (shuffle) {
+                            final playlist = _pendingPlaylist!;
+                            setState(() => _pendingPlaylist = null);
+                            controller.playPlaylist(
+                              playlist,
+                              shuffle: shuffle,
+                            );
+                          },
+                          onCancel: () =>
+                              setState(() => _pendingPlaylist = null),
                         ),
+                      ),
 
-                      if (_pendingPlaylist != null)
-                        Positioned.fill(
-                          child: PlaylistConfirm(
-                            playlist: _pendingPlaylist!,
-                            queueCount: controller.upNext.length,
-                            initialShuffle: controller.shuffleOn,
-                            onConfirm: (shuffle) {
-                              final playlist = _pendingPlaylist!;
-                              setState(() => _pendingPlaylist = null);
-                              controller.playPlaylist(
-                                playlist,
-                                shuffle: shuffle,
-                              );
-                            },
-                            onCancel: () =>
-                                setState(() => _pendingPlaylist = null),
-                          ),
-                        ),
-
-                      if (controller.toast != null)
-                        Positioned(
-                          left: 20,
-                          right: 20,
-                          bottom: 34,
-                          child: Center(child: AppToast(text: controller.toast!)),
-                        ),
-                    ],
-                  ),
+                    if (controller.toast != null)
+                      Positioned(
+                        left: 20,
+                        right: 20,
+                        bottom: 34,
+                        child: Center(child: AppToast(text: controller.toast!)),
+                      ),
+                  ],
                 ),
               ),
             ),

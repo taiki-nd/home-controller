@@ -203,6 +203,37 @@ class GlassPill extends StatelessWidget {
   }
 }
 
+/// 本文フォント（Zen Kaku Gothic New）は仮名のぶん上が広く、行の箱が
+/// ascent 1.160em / descent 0.288em で切られる。欧文の字面（cap height
+/// 0.700em）はその箱の中心より (1.160 - 0.288 - 0.700) / 2 = 0.086em 下に
+/// 落ちるので、点と横に並べると文字だけ沈んで見える。
+///
+/// 箱の高さは変えずに字面だけ持ち上げて、見た目の中心を箱の中心に戻す。
+/// ピルや行の高さには響かない。
+class CapCentered extends StatelessWidget {
+  const CapCentered({super.key, required this.fontSize, required this.child});
+
+  /// 中の文字のサイズ。持ち上げ量はこれに比例する。
+  final double fontSize;
+
+  final Widget child;
+
+  /// 行の箱の高さが整数に丸められる都合で、実測は 13px で 0.079em、
+  /// 14px で 0.096em、16px で 0.091em と少し振れる。13〜16px なら
+  /// この 1 つの値で誤差 0.15px 以内に収まる。
+  static const _lift = 0.086;
+
+  static double liftFor(double fontSize) => fontSize * _lift;
+
+  @override
+  Widget build(BuildContext context) {
+    return Transform.translate(
+      offset: Offset(0, -liftFor(fontSize)),
+      child: child,
+    );
+  }
+}
+
 /// デバイス状態を示す小さな点。再生中は脈打つ（`@keyframes pulseDot`）。
 class StatusDot extends StatefulWidget {
   const StatusDot({super.key, required this.color, this.size = 8, this.pulse = true});

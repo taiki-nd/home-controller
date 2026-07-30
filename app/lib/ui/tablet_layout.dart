@@ -13,6 +13,11 @@ import 'widgets/transport.dart';
 
 /// iPad 横（デザインは 1194x834）。
 /// 左に大判アートワーク、右に幅 452 の常設レール。
+///
+/// 画面いっぱいに敷く（呼ぶ側で SafeArea を掛けない）。そうしないと
+/// ステータスバーの帯が背景グラデ 1 枚になり、レールの面と境界線が帯の
+/// 手前で途切れて、時刻・バッテリーの行だけ左右がつながって見える。
+/// 帯のぶんは [topInset] で中身だけ下げる。
 class TabletLayout extends StatelessWidget {
   const TabletLayout({
     super.key,
@@ -20,6 +25,7 @@ class TabletLayout extends StatelessWidget {
     required this.onPlayNow,
     required this.onPlayPlaylist,
     required this.attribution,
+    required this.topInset,
   });
 
   final PlayerController controller;
@@ -27,17 +33,31 @@ class TabletLayout extends StatelessWidget {
   final ValueChanged<PlaylistSummary> onPlayPlaylist;
   final Widget attribution;
 
+  /// ステータスバー + 停止バナーぶん、中身を押し下げる。面の塗りは下げない。
+  final double topInset;
+
+  /// デバイスピルの点の x（左余白 40 + ピルの左パディング 16）。
+  /// ポップオーバーの点をこの列に載せるので、余白を触ったらここも直す。
+  static const devicePillDotX = 56.0;
+
   @override
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Expanded(child: _NowPlayingPane(controller: controller, attribution: attribution)),
+        Expanded(
+          child: _NowPlayingPane(
+            controller: controller,
+            attribution: attribution,
+            topInset: topInset,
+          ),
+        ),
         SizedBox(
           width: 452,
           child: _Rail(
             controller: controller,
             onPlayNow: onPlayNow,
             onPlayPlaylist: onPlayPlaylist,
+            topInset: topInset,
           ),
         ),
       ],
@@ -46,10 +66,15 @@ class TabletLayout extends StatelessWidget {
 }
 
 class _NowPlayingPane extends StatelessWidget {
-  const _NowPlayingPane({required this.controller, required this.attribution});
+  const _NowPlayingPane({
+    required this.controller,
+    required this.attribution,
+    required this.topInset,
+  });
 
   final PlayerController controller;
   final Widget attribution;
+  final double topInset;
 
   @override
   Widget build(BuildContext context) {
@@ -59,13 +84,14 @@ class _NowPlayingPane extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         // デザインは 500px（停止中 430px）。狭い iPad でも収まるよう上限を掛ける。
+        // 高さは中身が使える分（= 全高 - topInset）で測る。
         final artSize = (stopped ? 430.0 : 500.0).clamp(
           200.0,
-          (constraints.maxHeight - 320).clamp(200.0, 520.0),
+          (constraints.maxHeight - topInset - 320).clamp(200.0, 520.0),
         );
 
         return Padding(
-          padding: const EdgeInsets.fromLTRB(40, 34, 30, 30),
+          padding: EdgeInsets.fromLTRB(40, topInset + 34, 30, 30),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -160,13 +186,16 @@ class _DevicePill extends StatelessWidget {
             pulse: controller.isPlaying,
           ),
           const SizedBox(width: 10),
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 220),
-            child: Text(
-              controller.deviceLabel,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: AppText.body(14, weight: FontWeight.w700),
+          CapCentered(
+            fontSize: 14,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 220),
+              child: Text(
+                controller.deviceLabel,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppText.body(14, weight: FontWeight.w700),
+              ),
             ),
           ),
         ],
@@ -180,11 +209,16 @@ class _Rail extends StatelessWidget {
     required this.controller,
     required this.onPlayNow,
     required this.onPlayPlaylist,
+    required this.topInset,
   });
 
   final PlayerController controller;
   final ValueChanged<Track> onPlayNow;
   final ValueChanged<PlaylistSummary> onPlayPlaylist;
+
+  /// 面はここも含めて塗り、進捗バーだけこのぶん下げる。
+  /// ステータスバーの帯をレールの色で塗り分けているのがこれ。
+  final double topInset;
 
   @override
   Widget build(BuildContext context) {
@@ -200,7 +234,7 @@ class _Rail extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Container(
-                padding: const EdgeInsets.fromLTRB(24, 26, 24, 20),
+                padding: EdgeInsets.fromLTRB(24, topInset + 20, 24, 14),
                 decoration: BoxDecoration(
                   border: Border(
                     bottom: BorderSide(color: AppColors.white(0.08)),
@@ -209,7 +243,7 @@ class _Rail extends StatelessWidget {
                 child: Column(
                   children: [
                     ProgressRow(controller: controller),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 12),
                     TransportControls(controller: controller, compact: false),
                   ],
                 ),

@@ -99,7 +99,7 @@ class ProgressRow extends StatelessWidget {
 }
 
 /// ◀◀ / 再生・一時停止 / ▶▶。
-/// iPad は 62 / 84 / 62 の塗りボタン、iPhone は前後を透明にして 74 の主ボタン。
+/// iPad は 42 / 56 / 42 の塗りボタン、iPhone は前後を透明にして 74 の主ボタン。
 class TransportControls extends StatelessWidget {
   const TransportControls({
     super.key,
@@ -119,17 +119,17 @@ class TransportControls extends StatelessWidget {
         _SideButton(
           icon: Icons.skip_previous_rounded,
           filled: !compact,
-          size: compact ? kMinTapTarget : 62,
+          size: compact ? kMinTapTarget : 42,
           onTap: enabled ? controller.skipPrevious : null,
           semanticLabel: '前の曲',
         ),
-        SizedBox(width: compact ? 26 : 22),
-        _PlayButton(controller: controller, size: compact ? 74 : 84),
-        SizedBox(width: compact ? 26 : 22),
+        SizedBox(width: compact ? 26 : 16),
+        _PlayButton(controller: controller, size: compact ? 74 : 56),
+        SizedBox(width: compact ? 26 : 16),
         _SideButton(
           icon: Icons.skip_next_rounded,
           filled: !compact,
-          size: compact ? kMinTapTarget : 62,
+          size: compact ? kMinTapTarget : 42,
           onTap: enabled ? controller.skipNext : null,
           semanticLabel: '次の曲',
         ),
@@ -169,7 +169,7 @@ class _SideButton extends StatelessWidget {
             height: size,
             child: Icon(
               icon,
-              size: filled ? 28 : 30,
+              size: filled ? 20 : 30,
               color: onTap == null ? AppColors.white(0.3) : AppColors.white(0.85),
             ),
           ),

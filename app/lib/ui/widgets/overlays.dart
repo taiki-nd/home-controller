@@ -13,6 +13,8 @@ class StoppedBanner extends StatelessWidget {
 
   final VoidCallback onResume;
 
+  /// 帯そのものの高さ。画面の天から置くので、実際の見た目はこれに
+  /// ステータスバーぶん（SafeArea）が足された高さになる。
   static const height = 72.0;
 
   @override
@@ -20,33 +22,40 @@ class StoppedBanner extends StatelessWidget {
     return ClipRect(
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
+        child: DecoratedBox(
           decoration: BoxDecoration(
             color: AppColors.amber.withValues(alpha: 0.14),
             border: Border(
               bottom: BorderSide(color: AppColors.amber.withValues(alpha: 0.35)),
             ),
           ),
+          // アンバーの面はステータスバーまで塗り、中身だけその下から始める。
           child: SafeArea(
             bottom: false,
-            child: Row(
-              children: [
-                const StatusDot(color: AppColors.amber, size: 10, pulse: false),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Text(
-                    '停止中 — キューを使い切りました',
-                    style: AppText.body(
-                      15,
-                      weight: FontWeight.w700,
-                      color: AppColors.amberText,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
+              child: Row(
+                children: [
+                  const StatusDot(
+                    color: AppColors.amber,
+                    size: 10,
+                    pulse: false,
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Text(
+                      '停止中 — キューを使い切りました',
+                      style: AppText.body(
+                        15,
+                        weight: FontWeight.w700,
+                        color: AppColors.amberText,
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                _AmberButton(label: '曲を足して再開', onPressed: onResume),
-              ],
+                  const SizedBox(width: 12),
+                  _AmberButton(label: '曲を足して再開', onPressed: onResume),
+                ],
+              ),
             ),
           ),
         ),
@@ -298,6 +307,13 @@ class DevicePopover extends StatelessWidget {
   final VoidCallback onRescan;
   final double width;
 
+  /// 箱の左端から行の点までの距離（枠線 1 + 外周 10 + 行の左パディング 12）。
+  /// 呼ぶ側はここを引いて置くことで、点をピルの点の真下に落とせる。
+  static const dotInset = 23.0;
+
+  /// ピルの点の x に点を合わせるための左位置。
+  static double leftForPillDotX(double pillDotX) => pillDotX - dotInset;
+
   @override
   Widget build(BuildContext context) {
     return TweenAnimationBuilder<double>(
@@ -387,17 +403,23 @@ class _DeviceRow extends StatelessWidget {
           ),
           const SizedBox(width: 12),
           Expanded(
-            child: Text(
-              device.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: AppText.body(16, weight: FontWeight.w700),
+            child: CapCentered(
+              fontSize: 16,
+              child: Text(
+                device.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppText.body(16, weight: FontWeight.w700),
+              ),
             ),
           ),
           const SizedBox(width: 8),
-          Text(
-            device.kindLabel,
-            style: AppText.body(12, color: AppColors.white(0.4)),
+          CapCentered(
+            fontSize: 12,
+            child: Text(
+              device.kindLabel,
+              style: AppText.body(12, color: AppColors.white(0.4)),
+            ),
           ),
         ],
       ),
@@ -467,32 +489,31 @@ class ErrorBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // ステータスバーぶんは呼ぶ側（controller_screen）が y に足して置くので、
+    // ここで SafeArea を掛けると二重に下がる。
     return Material(
       color: AppColors.danger.withValues(alpha: 0.16),
-      child: SafeArea(
-        bottom: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 10, 8, 10),
-          child: Row(
-            children: [
-              const Icon(Icons.error_outline, color: AppColors.danger, size: 18),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  message,
-                  style: AppText.body(
-                    14,
-                    weight: FontWeight.w700,
-                    color: AppColors.white(0.9),
-                  ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 10, 8, 10),
+        child: Row(
+          children: [
+            const Icon(Icons.error_outline, color: AppColors.danger, size: 18),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                message,
+                style: AppText.body(
+                  14,
+                  weight: FontWeight.w700,
+                  color: AppColors.white(0.9),
                 ),
               ),
-              IconButton(
-                onPressed: onDismiss,
-                icon: Icon(Icons.close, color: AppColors.white(0.7), size: 18),
-              ),
-            ],
-          ),
+            ),
+            IconButton(
+              onPressed: onDismiss,
+              icon: Icon(Icons.close, color: AppColors.white(0.7), size: 18),
+            ),
+          ],
         ),
       ),
     );

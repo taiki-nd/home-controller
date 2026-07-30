@@ -8,6 +8,8 @@ import 'package:spotify_remote/theme/tokens.dart';
 import 'package:spotify_remote/ui/phone_layout.dart';
 import 'package:spotify_remote/ui/tablet_layout.dart';
 import 'package:spotify_remote/ui/widgets/atoms.dart';
+import 'package:spotify_remote/ui/widgets/overlays.dart';
+import 'package:spotify_remote/ui/widgets/transport.dart';
 
 /// 実際に鳴っている状態を再現する差し替え API。
 /// artworkUrl は null にしてある（テスト環境で Image.network を踏ませないため）。
@@ -138,6 +140,7 @@ void main() {
           onPlayNow: (_) {},
           onPlayPlaylist: (_) {},
           attribution: const SizedBox.shrink(),
+          topInset: 0,
         ),
         ipad,
       ),
@@ -217,6 +220,7 @@ void main() {
                 onPlayNow: (_) {},
                 onPlayPlaylist: (_) {},
                 attribution: const SizedBox.shrink(),
+                topInset: 0,
               ),
         size,
       ),
@@ -320,6 +324,7 @@ void main() {
           onPlayNow: (_) {},
           onPlayPlaylist: (_) {},
           attribution: const SizedBox.shrink(),
+          topInset: 0,
         ),
         ipad,
       ),
@@ -358,6 +363,140 @@ void main() {
     expect(api.commands, isEmpty);
     await tester.pump(const Duration(milliseconds: 600));
     expect(tester.takeException(), isNull);
+  });
+
+  // デバイス一覧の点は、ピルの点の真下に落ちていないと横にずれて見える。
+  // 配置は controller_screen が「ピルの点の x - DevicePopover.dotInset」で決めて
+  // いるので、その両端（宣言した x と、箱の中の点の位置）を実測で押さえておく。
+  testWidgets('iPad: デバイスピルの点は宣言した x にいる', (tester) async {
+    tester.view.physicalSize = ipad;
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final controller = await buildController(tester, playing: true);
+    await tester.pumpWidget(
+      wrap(
+        TabletLayout(
+          controller: controller,
+          onPlayNow: (_) {},
+          onPlayPlaylist: (_) {},
+          attribution: const SizedBox.shrink(),
+          topInset: 0,
+        ),
+        ipad,
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      tester.getRect(find.byType(StatusDot).first).left,
+      TabletLayout.devicePillDotX,
+    );
+  });
+
+  testWidgets('iPhone: デバイスピルの点は宣言した x にいる', (tester) async {
+    tester.view.physicalSize = iphone;
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final controller = await buildController(tester, playing: true);
+    await tester.pumpWidget(
+      wrap(
+        PhoneLayout(
+          controller: controller,
+          onPlayNow: (_) {},
+          onPlayPlaylist: (_) {},
+          attribution: const SizedBox.shrink(),
+          topInset: 0,
+        ),
+        iphone,
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      tester.getRect(find.byType(StatusDot).first).left,
+      PhoneLayout.devicePillDotX,
+    );
+  });
+
+  testWidgets('ポップオーバーの点は宣言したインセットにいる', (tester) async {
+    tester.view.physicalSize = ipad;
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      wrap(
+        Align(
+          alignment: Alignment.topLeft,
+          child: DevicePopover(
+            devices: const [
+              SpotifyDevice(
+                id: 'wiim',
+                name: 'WiiM Ultra',
+                kind: SpotifyDeviceKind.speaker,
+                isActive: true,
+                isRestricted: false,
+                volumePercent: 42,
+              ),
+            ],
+            activeDeviceId: 'wiim',
+            onPick: (_) {},
+            onRescan: () {},
+          ),
+        ),
+        ipad,
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // 箱の左端から点までが dotInset。ここが変わると配置の逆算が崩れる。
+    final box = tester.getRect(find.byType(DevicePopover));
+    final dot = tester.getRect(find.byType(StatusDot).first);
+    expect(dot.left - box.left, DevicePopover.dotInset);
+  });
+
+  // ステータスバー（時刻・バッテリー）の帯を左右で塗り分けるために、レールは
+  // 画面の天から敷いて、中身だけ topInset で下げている。SafeArea をレイアウトの
+  // 外に戻すとレールの面が帯の手前で切れて、帯が背景グラデ 1 色に戻る。
+  testWidgets('iPad: 帯のぶんは面ではなく中身だけが下がる', (tester) async {
+    const inset = 24.0;
+    tester.view.physicalSize = ipad;
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    /// レール（幅 452 の箱）と、その中の進捗バーの位置。
+    Future<(Rect, Rect)> layoutWith(double topInset) async {
+      final controller = await buildController(tester, playing: true);
+      await tester.pumpWidget(
+        wrap(
+          TabletLayout(
+            controller: controller,
+            onPlayNow: (_) {},
+            onPlayPlaylist: (_) {},
+            attribution: const SizedBox.shrink(),
+            topInset: topInset,
+          ),
+          ipad,
+        ),
+      );
+      await tester.pump();
+      return (
+        tester.getRect(
+          find.byWidgetPredicate((w) => w is SizedBox && w.width == 452),
+        ),
+        tester.getRect(find.byType(ProgressRow)),
+      );
+    }
+
+    final (railFlush, progressFlush) = await layoutWith(0);
+    final (rail, progress) = await layoutWith(inset);
+
+    // 面は帯を含めて画面いっぱい。上端が下がると帯が塗れない。
+    expect(railFlush.top, 0);
+    expect(rail, railFlush);
+    // 中身だけ帯のぶん下がる（余白の実値には依存させない）。
+    expect(progress.top - progressFlush.top, inset);
   });
 
   testWidgets('停止中(204)は「停止中」の状態表示になる', (tester) async {
