@@ -7,6 +7,17 @@ import '../models/spotify_models.dart';
 import 'auth_service.dart';
 import 'spotify_config.dart';
 
+/// 待ち時間を人が読める形にする。Development Mode で枠を使い切ると Spotify は
+/// Retry-After に数時間を返してくるので、「17870s」のままでは意味が取れない。
+String formatDuration(Duration d) {
+  if (d.inHours >= 1) {
+    final minutes = d.inMinutes.remainder(60);
+    return minutes == 0 ? '${d.inHours}時間' : '${d.inHours}時間$minutes分';
+  }
+  if (d.inMinutes >= 1) return '${d.inMinutes}分';
+  return '${d.inSeconds}秒';
+}
+
 /// 呼び出し側が分岐したい失敗だけを型にする。それ以外は [SpotifyApiException]。
 class SpotifyApiException implements Exception {
   SpotifyApiException(this.message, {this.statusCode});
@@ -225,7 +236,7 @@ class SpotifyApi {
     final cooldown = rateLimitCooldown;
     if (cooldown != null) {
       throw SpotifyApiException(
-        'レート制限中（あと ${cooldown.inSeconds}s）',
+        'Spotify のレート制限中（あと${formatDuration(cooldown)}）',
         statusCode: 429,
       );
     }
@@ -290,7 +301,8 @@ class SpotifyApi {
           '(直近30秒に $callsInWindow 回 / 連続 $_consecutive429 回目)',
         );
         throw SpotifyApiException(
-          'Spotify のレート制限に掛かりました（${seconds}s 待機）',
+          'Spotify のレート制限に掛かりました'
+          '（あと${formatDuration(Duration(seconds: seconds))}）',
           statusCode: 429,
         );
 

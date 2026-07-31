@@ -272,7 +272,11 @@ class PlayerController extends ChangeNotifier {
     // 操作されたときの追従の速さ」だけなので、レート制限（ローリング 30 秒
     // ウィンドウ）に余裕を持たせるほうを取る。
     final interval = cooldown != null
-        ? cooldown + const Duration(milliseconds: 250)
+        // クールダウンは数時間になることがある（Development Mode で枠を使い切ると
+        // Spotify は Retry-After に 5 時間近くを返してくる）。そのまま寝かせると
+        // バナーの「あと N」が固まったままになるので、最長 60 秒で起こして出し直す。
+        // 待機中は [SpotifyApi._send] が通信前に弾くので追加のリクエストは出ない。
+        ? _capped(cooldown + const Duration(milliseconds: 250))
         : _pollFailures > 0
         // 失敗が続いている間は下がっていく。回復したら 0 に戻る。
         ? Duration(seconds: (3 * (1 << _pollFailures)).clamp(3, 30))
@@ -281,6 +285,11 @@ class PlayerController extends ChangeNotifier {
         : const Duration(seconds: 10);
     _pollTimer = Timer(interval, _pollOnce);
   }
+
+  static const _maxPollInterval = Duration(seconds: 60);
+
+  static Duration _capped(Duration d) =>
+      d > _maxPollInterval ? _maxPollInterval : d;
 
   /// 再生中だけ進捗バー用のティッカーを回す。
   void _syncTicker() {
