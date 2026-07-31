@@ -241,7 +241,13 @@ class SpotifyApi {
       );
     }
 
-    final token = await _auth.accessToken();
+    final String? token;
+    try {
+      token = await _auth.accessToken();
+    } on AuthRefreshFailedException catch (e) {
+      // トークンは生きている。通信が戻れば次の呼び出しで通る。
+      throw SpotifyApiException(e.message);
+    }
     if (token == null) throw SpotifyAuthExpiredException();
 
     _trimRecentCalls();
@@ -273,7 +279,12 @@ class SpotifyApi {
       case 401:
         // トークン期限切れ。1 回だけ強制リフレッシュして同じ要求をやり直す。
         if (isRetry) throw SpotifyAuthExpiredException();
-        final refreshed = await _auth.accessToken(forceRefresh: true);
+        final String? refreshed;
+        try {
+          refreshed = await _auth.accessToken(forceRefresh: true);
+        } on AuthRefreshFailedException catch (e) {
+          throw SpotifyApiException(e.message);
+        }
         if (refreshed == null) throw SpotifyAuthExpiredException();
         return _send(method, path, query: query, body: body, isRetry: true);
 

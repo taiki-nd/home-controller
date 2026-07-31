@@ -9,6 +9,20 @@ import 'spotify_config.dart';
 /// サインインのどこで止まったか。タイムアウト時の文言を出し分けるためだけに使う。
 enum _SignInStage { authorize, persist }
 
+/// リフレッシュがネットワーク都合などで失敗した（refresh_token は生きている）。
+///
+/// 圏外や Wi-Fi 切り替え中でも token エンドポイントは当然失敗する。これを
+/// 「トークンが死んだ」と扱うと、通信が戻っただけで済む場面で再ログインを
+/// 強いることになるので、ここだけ型を分けてサインアウトさせない。
+class AuthRefreshFailedException implements Exception {
+  AuthRefreshFailedException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => 'AuthRefreshFailedException: $message';
+}
+
 /// Authorization Code + PKCE でのログインとトークン保持。
 ///
 /// サーバーは無い（設計メモ §13）。PKCE なので client secret も無い。
@@ -140,7 +154,9 @@ class AuthService extends ChangeNotifier {
   }
 
   /// 有効な access token を返す。必要なら黙ってリフレッシュする。
-  /// リフレッシュにも失敗したら null（＝再ログインが要る）。
+  ///
+  /// null＝refresh_token が拒否された（再ログインが要る）。
+  /// 通信都合で更新できなかっただけなら [AuthRefreshFailedException] を投げる。
   Future<String?> accessToken({bool forceRefresh = false}) async {
     if (!_restored) await restore();
     if (!forceRefresh && _accessToken != null && _expiresAt != null) {
@@ -174,11 +190,30 @@ class AuthService extends ChangeNotifier {
       return _accessToken;
     } catch (e) {
       debugPrint('AuthService refresh failed: $e');
-      // refresh_token が無効化された（別端末でのローテーション、認可取り消し等）。
-      // 保持していても意味がないので消して再ログインに倒す。
-      await signOut();
-      return null;
+      if (_isTokenRejected(e)) {
+        // refresh_token が無効化された（別端末でのローテーション、認可取り消し等）。
+        // 保持していても意味がないので消して再ログインに倒す。
+        await signOut();
+        return null;
+      }
+      // それ以外（圏外・DNS 失敗・Spotify 側の 5xx 等）はトークンを残す。
+      throw AuthRefreshFailedException('Spotify に接続できませんでした');
     }
+  }
+
+  /// 認可サーバーが grant そのものを拒否したか。
+  ///
+  /// ここが true のときだけトークンを捨てる。判別できない失敗は通信断と同じ
+  /// 扱いにして残す（消すのは片道で、間違えると再ログインを強いるため）。
+  static bool _isTokenRejected(Object e) {
+    if (e is! FlutterAppAuthPlatformException) return false;
+    return switch (e.platformErrorDetails.error) {
+      FlutterAppAuthOAuthError.invalidGrant ||
+      FlutterAppAuthOAuthError.invalidClient ||
+      FlutterAppAuthOAuthError.unauthorizedClient ||
+      FlutterAppAuthOAuthError.invalidScope => true,
+      _ => false,
+    };
   }
 
   /// **PKCE ではリフレッシュのたびに新しい refresh_token が返る（ローテーション）。**
