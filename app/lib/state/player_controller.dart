@@ -65,7 +65,12 @@ class PlayerController extends ChangeNotifier {
   bool _disposed = false;
   Timer? _pollTimer;
   bool _polling = false;
+  int _pollFailures = 0;
   String? _lastQueueKey;
+
+  /// 出しっぱなしにすべき失敗。通信のブレではなく Spotify 側の返答。
+  static bool _isHardError(SpotifyApiException e) =>
+      e.statusCode == 429 || e.statusCode == 403 || e.statusCode == 402;
 
   /// 進捗バーだけを 500ms で塗り替えるための別 Listenable。
   /// 全体を notifyListeners すると 2Hz で全再ビルドになるので分けている。
@@ -221,10 +226,11 @@ class PlayerController extends ChangeNotifier {
       final state = await _api.playbackState();
       _playback = state;
       _playbackFetchedAt = DateTime.now();
+      _pollFailures = 0;
+      _errorBanner = null;
       if (state.hasContent) {
         // 再生できているならデバイスは生きている。
         _deviceLost = false;
-        _errorBanner = null;
       }
       unawaited(_updatePalette(state.track));
 
@@ -238,10 +244,17 @@ class PlayerController extends ChangeNotifier {
     } on SpotifyAuthExpiredException {
       // AuthService 側が既にサインアウト済み。ルートが Login に切り替わる。
       return;
+    } on NoActiveDeviceException {
+      // デバイス消失は refreshDevices / NoDeviceOverlay の担当。バナーは出さない。
+      _pollFailures = 0;
     } on SpotifyApiException catch (e) {
-      // ポーリングの失敗はうるさく出さない。429 だけ間隔で吸収する。
-      if (e.statusCode != 429 && e.statusCode != 404) {
-        debugPrint('poll failed: $e');
+      _pollFailures++;
+      debugPrint('poll failed ($_pollFailures 回目): $e');
+      // 一瞬の通信断でバナーが点滅すると鬱陶しいので、原因がはっきりしている
+      // ものは即時、それ以外は 3 回続けて失敗してから出す。
+      if (_isHardError(e) || _pollFailures >= 3) {
+        _errorBanner = e.message;
+        notifyListeners();
       }
     } finally {
       _polling = false;
@@ -254,11 +267,18 @@ class PlayerController extends ChangeNotifier {
     _pollTimer?.cancel();
     if (_disposed || !_foreground) return;
     final cooldown = _api.rateLimitCooldown;
+    // 進捗バーは progress_ms からローカル内挿している（[position]）ので、
+    // ポーリングを詰めても見た目は良くならない。効くのは「他のクライアントで
+    // 操作されたときの追従の速さ」だけなので、レート制限（ローリング 30 秒
+    // ウィンドウ）に余裕を持たせるほうを取る。
     final interval = cooldown != null
         ? cooldown + const Duration(milliseconds: 250)
+        : _pollFailures > 0
+        // 失敗が続いている間は下がっていく。回復したら 0 に戻る。
+        ? Duration(seconds: (3 * (1 << _pollFailures)).clamp(3, 30))
         : isPlaying
-        ? const Duration(seconds: 1)
-        : const Duration(seconds: 5);
+        ? const Duration(seconds: 3)
+        : const Duration(seconds: 10);
     _pollTimer = Timer(interval, _pollOnce);
   }
 
@@ -280,8 +300,15 @@ class PlayerController extends ChangeNotifier {
     try {
       _queue = await _api.queue();
     } on SpotifyApiException catch (e) {
-      debugPrint('queue fetch failed: $e');
+      _reportBackgroundFailure('queue', e);
     }
+  }
+
+  /// 裏で走る取得の失敗。普段は黙っているが、レート制限や権限まわりは
+  /// 黙っていると「なぜか古いまま」にしか見えないのでバナーに出す。
+  void _reportBackgroundFailure(String what, SpotifyApiException e) {
+    debugPrint('$what fetch failed: $e');
+    if (_isHardError(e)) _errorBanner = e.message;
   }
 
   /// キュー操作の直後だけ、反映を待ってから取り直す。
@@ -370,7 +397,7 @@ class PlayerController extends ChangeNotifier {
         _preferredDeviceId = null;
       }
     } on SpotifyApiException catch (e) {
-      debugPrint('devices fetch failed: $e');
+      _reportBackgroundFailure('devices', e);
     }
     if (!_disposed) notifyListeners();
   }
@@ -576,7 +603,7 @@ class PlayerController extends ChangeNotifier {
       _playlists = await _api.playlists();
       _playlistsLoaded = true;
     } on SpotifyApiException catch (e) {
-      debugPrint('playlists fetch failed: $e');
+      _reportBackgroundFailure('playlists', e);
     }
     if (!_disposed) notifyListeners();
   }

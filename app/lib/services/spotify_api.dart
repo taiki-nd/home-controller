@@ -50,8 +50,26 @@ class SpotifyApi {
   final Dio _dio;
 
   /// 429 を食らったら [Retry-After] 秒だけ全リクエストを止める。
-  /// ポーリングが 1 秒間隔で回っているので、個別リトライより全体を寝かせるほうが速く復帰する。
+  /// ポーリングが回りっぱなしなので、個別リトライより全体を寝かせるほうが速く復帰する。
   DateTime? _rateLimitedUntil;
+
+  /// 連続で 429 を食らったら待ち時間を伸ばす。成功したら 0 に戻す。
+  int _consecutive429 = 0;
+
+  /// Spotify のレート制限はローリング 30 秒ウィンドウで見られる。
+  /// 「今どれだけ叩いているか」を出せないと調整しようがないので数えておく。
+  final List<DateTime> _recentCalls = [];
+
+  /// 直近 30 秒に投げたリクエスト数。
+  int get callsInWindow {
+    _trimRecentCalls();
+    return _recentCalls.length;
+  }
+
+  void _trimRecentCalls() {
+    final cutoff = DateTime.now().subtract(const Duration(seconds: 30));
+    _recentCalls.removeWhere((t) => t.isBefore(cutoff));
+  }
 
   Duration? get rateLimitCooldown {
     final until = _rateLimitedUntil;
@@ -215,6 +233,9 @@ class SpotifyApi {
     final token = await _auth.accessToken();
     if (token == null) throw SpotifyAuthExpiredException();
 
+    _trimRecentCalls();
+    _recentCalls.add(DateTime.now());
+
     late final Response<dynamic> response;
     try {
       response = await _dio.request<dynamic>(
@@ -232,7 +253,10 @@ class SpotifyApi {
     }
 
     final status = response.statusCode ?? 0;
-    if (status >= 200 && status < 300) return response;
+    if (status >= 200 && status < 300) {
+      _consecutive429 = 0;
+      return response;
+    }
 
     switch (status) {
       case 401:
@@ -254,12 +278,21 @@ class SpotifyApi {
         throw NoActiveDeviceException();
 
       case 429:
-        // Retry-After は秒。ヘッダが無いこともあるので既定 3 秒。
+        _consecutive429++;
+        // Retry-After は秒。Spotify が指定してきたらそれが正。
+        // ヘッダが無いこともあるので、その場合だけ 5s から倍々で伸ばす（上限 60s）。
         final header = response.headers.value('retry-after');
-        final seconds = int.tryParse(header ?? '') ?? 3;
+        final fallback = (5 * (1 << (_consecutive429 - 1))).clamp(5, 60);
+        final seconds = int.tryParse(header ?? '') ?? fallback;
         _rateLimitedUntil = DateTime.now().add(Duration(seconds: seconds));
-        debugPrint('Spotify rate limited for ${seconds}s');
-        throw SpotifyApiException('混み合っています（${seconds}s 待機）', statusCode: 429);
+        debugPrint(
+          'Spotify 429 on $method $path — wait ${seconds}s '
+          '(直近30秒に $callsInWindow 回 / 連続 $_consecutive429 回目)',
+        );
+        throw SpotifyApiException(
+          'Spotify のレート制限に掛かりました（${seconds}s 待機）',
+          statusCode: 429,
+        );
 
       default:
         throw SpotifyApiException(
