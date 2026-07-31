@@ -34,6 +34,9 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  # ポーリングのスケジュール検証用（flutter_test 経由で入ってはいるが、
+  # 直接 import するので明示的に依存させる）。
+  fake_async: ^1.3.3
 
 flutter:
   uses-material-design: true

@@ -28,13 +28,20 @@ class ArtworkPalette {
 /// **ローカルにキュー状態を持たない**（設計メモ §1）。ここにあるのは全て
 /// 「直近に Spotify から取ってきたものの写し」と、UI の一時状態だけ。
 class PlayerController extends ChangeNotifier {
-  PlayerController(this._api);
+  /// [now] はテスト用。ポーリングの間隔は「曲の残り時間」から決まるので、
+  /// 時計を差し替えられないと fake_async でスケジュールを検証できない
+  /// （fake_async が進めるのはタイマーだけで [DateTime.now] は実時刻のまま）。
+  PlayerController(this._api, {DateTime Function()? now})
+    : _now = now ?? DateTime.now {
+    _playbackFetchedAt = _now();
+  }
 
   final SpotifyApi _api;
+  final DateTime Function() _now;
 
   // ── Spotify から取ってきたもの ────────────────────────────────────────
   PlaybackState _playback = PlaybackState.stopped;
-  DateTime _playbackFetchedAt = DateTime.now();
+  late DateTime _playbackFetchedAt;
   QueueSnapshot _queue = QueueSnapshot.empty;
   List<SpotifyDevice> _devices = const [];
   List<PlaylistSummary> _playlists = const [];
@@ -66,6 +73,7 @@ class PlayerController extends ChangeNotifier {
   Timer? _pollTimer;
   bool _polling = false;
   int _pollFailures = 0;
+  int _boundaryRetries = 0;
   String? _lastQueueKey;
 
   /// 出しっぱなしにすべき失敗。通信のブレではなく Spotify 側の返答。
@@ -166,7 +174,7 @@ class PlayerController extends ChangeNotifier {
   Duration get position {
     final base = Duration(milliseconds: _playback.progressMs);
     if (!isPlaying) return base;
-    final elapsed = DateTime.now().difference(_playbackFetchedAt);
+    final elapsed = _now().difference(_playbackFetchedAt);
     final total = base + elapsed;
     final duration = this.duration;
     return total > duration ? duration : total;
@@ -225,7 +233,7 @@ class PlayerController extends ChangeNotifier {
     try {
       final state = await _api.playbackState();
       _playback = state;
-      _playbackFetchedAt = DateTime.now();
+      _playbackFetchedAt = _now();
       _pollFailures = 0;
       _errorBanner = null;
       if (state.hasContent) {
@@ -238,6 +246,7 @@ class PlayerController extends ChangeNotifier {
       final key = state.track?.uri;
       if (key != _lastQueueKey) {
         _lastQueueKey = key;
+        _boundaryRetries = 0; // 曲が変わったので終了予測の追い込みは終わり
         await _refreshQueue();
       }
       notifyListeners();
@@ -266,30 +275,65 @@ class PlayerController extends ChangeNotifier {
   void _scheduleNextPoll() {
     _pollTimer?.cancel();
     if (_disposed || !_foreground) return;
-    final cooldown = _api.rateLimitCooldown;
-    // 進捗バーは progress_ms からローカル内挿している（[position]）ので、
-    // ポーリングを詰めても見た目は良くならない。効くのは「他のクライアントで
-    // 操作されたときの追従の速さ」だけなので、レート制限（ローリング 30 秒
-    // ウィンドウ）に余裕を持たせるほうを取る。
-    final interval = cooldown != null
-        // クールダウンは数時間になることがある（Development Mode で枠を使い切ると
-        // Spotify は Retry-After に 5 時間近くを返してくる）。そのまま寝かせると
-        // バナーの「あと N」が固まったままになるので、最長 60 秒で起こして出し直す。
-        // 待機中は [SpotifyApi._send] が通信前に弾くので追加のリクエストは出ない。
-        ? _capped(cooldown + const Duration(milliseconds: 250))
-        : _pollFailures > 0
-        // 失敗が続いている間は下がっていく。回復したら 0 に戻る。
-        ? Duration(seconds: (3 * (1 << _pollFailures)).clamp(3, 30))
-        : isPlaying
-        ? const Duration(seconds: 3)
-        : const Duration(seconds: 10);
-    _pollTimer = Timer(interval, _pollOnce);
+    _pollTimer = Timer(_nextPollDelay(), _pollOnce);
   }
 
-  static const _maxPollInterval = Duration(seconds: 60);
+  /// 一定間隔では回さない。叩く理由があるときだけ起きる。
+  ///
+  /// 進捗バーは progress_ms からローカル内挿しているので（[position]）、
+  /// 間隔を詰めても見た目は良くならない。「自分が起こしていない変化」だけが
+  /// 取りに行く理由で、それは 2 つしかない:
+  ///
+  /// 1. 曲が自然に終わる — [duration] と progress_ms から**予測できる**ので、
+  ///    終わる時刻に 1 回だけ起こす。
+  /// 2. 他のクライアントからの操作 — 予測できないのでハートビートで拾う。
+  ///    この間隔がそのまま「外部操作に気づくまでの最大待ち時間」になる。
+  Duration _nextPollDelay() {
+    final cooldown = _api.rateLimitCooldown;
+    if (cooldown != null) {
+      // クールダウンは数時間になることがある（Development Mode で枠を使い切ると
+      // Spotify は Retry-After に 5 時間近くを返してくる）。そのまま寝かせると
+      // バナーの「あと N」が固まったままになるので、最長 1 分で起こして出し直す。
+      // 待機中は [SpotifyApi._send] が通信前に弾くので追加のリクエストは出ない。
+      return _atMost(cooldown + const Duration(milliseconds: 250), _heartbeat);
+    }
+    if (_pollFailures > 0) {
+      // 失敗が続いている間は下がっていく。回復したら 0 に戻る。
+      return Duration(seconds: (3 * (1 << _pollFailures)).clamp(3, 60));
+    }
+    if (!isPlaying) return _heartbeat;
 
-  static Duration _capped(Duration d) =>
-      d > _maxPollInterval ? _maxPollInterval : d;
+    final total = duration;
+    if (total == Duration.zero) return _heartbeat; // 尺不明なら予測できない
+    final remaining =
+        total -
+        Duration(milliseconds: _playback.progressMs) -
+        _now().difference(_playbackFetchedAt);
+
+    if (remaining > _boundarySlack) {
+      // まだ十分に先。曲の終わりに合わせて 1 回だけ起きる。
+      // 少し過ぎてから訊かないと前の曲が返るので slack を足す。
+      _boundaryRetries = 0;
+      return _atMost(remaining + _boundarySlack, _heartbeat);
+    }
+
+    // 変わり目に来ているのに曲が変わっていない。バッファリングで延びたか、
+    // 終端で止まっている（外部から一時停止された等）。
+    //
+    // ここを一律 slack で回すと、終端で止まったまま 1.5 秒間隔で叩き続けて
+    // しまう。1.5s → 3s → 6s … と伸ばしてハートビートで頭打ちにする。
+    // 曲が変われば [_pollOnce] が 0 に戻すので、通常は 1 回で終わる。
+    _boundaryRetries++;
+    return _atMost(_boundarySlack * (1 << (_boundaryRetries - 1)), _heartbeat);
+  }
+
+  /// 外部操作を拾うためだけの間隔。これがそのまま追従の遅れの上限になる。
+  static const _heartbeat = Duration(seconds: 60);
+
+  /// 曲の変わり目をどれだけ過ぎてから訊くか。
+  static const _boundarySlack = Duration(milliseconds: 1500);
+
+  static Duration _atMost(Duration d, Duration cap) => d > cap ? cap : d;
 
   /// 再生中だけ進捗バー用のティッカーを回す。
   void _syncTicker() {
@@ -465,7 +509,7 @@ class PlayerController extends ChangeNotifier {
       device: _playback.device,
       contextUri: _playback.contextUri,
     );
-    _playbackFetchedAt = DateTime.now();
+    _playbackFetchedAt = _now();
     _syncTicker();
     notifyListeners();
     await _guard(() =>
