@@ -84,11 +84,12 @@ class _NowPlayingPane extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        // デザインは 500px（停止中 430px）。狭い iPad でも収まるよう上限を掛ける。
+        // デザインは 570px（停止中 490px）。狭い iPad でも収まるよう上限を掛ける。
         // 高さは中身が使える分（= 全高 - topInset）で測る。
-        final artSize = (stopped ? 430.0 : 500.0).clamp(
+        // 引く 250 は、上のデバイスピル行と下の 2 行ぶんの取り分。
+        final artSize = (stopped ? 490.0 : 570.0).clamp(
           200.0,
-          (constraints.maxHeight - topInset - 320).clamp(200.0, 520.0),
+          (constraints.maxHeight - topInset - 250).clamp(200.0, 600.0),
         );
 
         return Padding(
@@ -132,13 +133,14 @@ class _NowPlayingPane extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 20),
-              CapsLabel(
-                stopped ? 'Last played' : 'Now playing',
-                size: 12,
-                color: AppColors.white(0.55),
+              // アーティスト / アルバムは「Now playing」と同じ体裁の 1 行。
+              // 曲がないときだけ、そこに状態を出す。
+              MarqueeText(
+                _metaLine(track) ?? (stopped ? 'LAST PLAYED' : 'NOW PLAYING'),
+                style: AppText.caps(12, AppColors.white(0.55)),
               ),
               const SizedBox(height: 10),
-              // 3 行ぶんの高さが曲によらず一定になるので、上の Expanded の取り分＝
+              // 2 行ぶんの高さが曲によらず一定になるので、上の Expanded の取り分＝
               // アートワークの位置も動かない。
               MarqueeText(
                 track?.name ?? '再生していません',
@@ -149,26 +151,22 @@ class _NowPlayingPane extends StatelessWidget {
                   letterSpacing: -1.5,
                 ),
               ),
-              const SizedBox(height: 8),
-              MarqueeText(
-                track?.artists ?? '',
-                style: AppText.body(
-                  24,
-                  weight: FontWeight.w700,
-                  color: AppColors.white(0.72),
-                ),
-              ),
-              const SizedBox(height: 6),
-              MarqueeText(
-                track?.albumName ?? '',
-                style: AppText.body(15, color: AppColors.white(0.42)),
-              ),
             ],
           ),
         );
       },
     );
   }
+}
+
+/// 「アーティスト / アルバム」。どちらか欠けたら残ったほうだけ、両方無ければ null。
+String? _metaLine(Track? track) {
+  if (track == null) return null;
+  final parts = [
+    track.artists,
+    track.albumName,
+  ].where((v) => v.trim().isNotEmpty).toList();
+  return parts.isEmpty ? null : parts.join(' / ');
 }
 
 class _DevicePill extends StatelessWidget {
