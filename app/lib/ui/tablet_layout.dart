@@ -9,6 +9,7 @@ import 'widgets/atoms.dart';
 import 'widgets/marquee_text.dart';
 import 'widgets/orbiting_light.dart';
 import 'widgets/panels.dart';
+import 'widgets/soft_surface.dart';
 import 'widgets/swipe_skip.dart';
 import 'widgets/transport.dart';
 
@@ -225,27 +226,28 @@ class _Rail extends StatelessWidget {
     return ClipRect(
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 26, sigmaY: 26),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: AppColors.bg.withValues(alpha: 0.72),
-            border: Border(left: BorderSide(color: AppColors.white(0.08))),
-          ),
+        // 左端は線で仕切らず、レールの色そのものを左の面へ繋ぐ。
+        child: SoftSurface(
+          color: AppColors.bg.withValues(alpha: 0.72),
+          edges: const [AxisDirection.left],
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Container(
-                padding: EdgeInsets.fromLTRB(24, topInset + 20, 24, 14),
-                decoration: BoxDecoration(
-                  border: Border(
-                    bottom: BorderSide(color: AppColors.white(0.08)),
+              // 進捗＋トランスポートの段。ここも線ではなく、わずかに持ち上げた
+              // 面が下（キュー側）とレールの左へ溶けていく形で仕切る。
+              // 下の余白 15 = 元の 14 + 線 1px ぶん。中身の位置は動かない。
+              SoftSurface(
+                color: AppColors.surface.withValues(alpha: 0.55),
+                edges: const [AxisDirection.down, AxisDirection.left],
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(24, topInset + 20, 24, 15),
+                  child: Column(
+                    children: [
+                      ProgressRow(controller: controller),
+                      const SizedBox(height: 12),
+                      TransportControls(controller: controller, compact: false),
+                    ],
                   ),
-                ),
-                child: Column(
-                  children: [
-                    ProgressRow(controller: controller),
-                    const SizedBox(height: 12),
-                    TransportControls(controller: controller, compact: false),
-                  ],
                 ),
               ),
               Padding(
