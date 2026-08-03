@@ -149,7 +149,8 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(find.text('Midnight City'), findsOneWidget);
-    expect(find.text('M83'), findsOneWidget);
+    // アーティストとアルバムは 1 行にまとめている。
+    expect(find.text('M83 / Album'), findsOneWidget);
     // Up next カード + 残り 2 曲の見出し。
     expect(find.text('Get Lucky'), findsOneWidget);
     expect(find.text('3 TRACKS AHEAD'), findsOneWidget);

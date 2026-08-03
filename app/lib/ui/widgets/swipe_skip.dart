@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' show lerpDouble;
 
@@ -66,8 +67,12 @@ class _SwipeSkipState extends State<SwipeSkip>
   /// ここまで引いたら離した時点で確定。
   double get _threshold => widget.size * 0.14;
 
+  /// 曲送りを投げるまでの待ち。画面から外れたら投げない。
+  Timer? _commitTimer;
+
   @override
   void dispose() {
+    _commitTimer?.cancel();
     _anim.dispose();
     super.dispose();
   }
@@ -137,11 +142,17 @@ class _SwipeSkipState extends State<SwipeSkip>
     _from = _rubber(_drag);
     _dir = next ? -1 : 1;
     setState(() => _phase = _Phase.commit);
+    const total = Duration(milliseconds: 430);
     _anim
-      ..duration = const Duration(milliseconds: 430)
+      ..duration = total
       ..forward(from: 0);
-    // 待たずに投げる。返りを待つと 0.5 秒無反応に見える。
-    (next ? widget.onNext : widget.onPrevious)();
+    // カードが透明になりきる瞬間に投げる。コントローラ側はキューの先頭を
+    // 待たずに出すので、入れ替わりはこの見えない一瞬の裏で終わる。
+    _commitTimer?.cancel();
+    _commitTimer = Timer(
+      Duration(milliseconds: (total.inMilliseconds * _exitShare).round()),
+      next ? widget.onNext : widget.onPrevious,
+    );
   }
 
   void _startCancel() {

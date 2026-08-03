@@ -34,7 +34,10 @@ void main() {
       await tester.pump(const Duration(milliseconds: 40));
     }
     await gesture.up();
+    // 曲送りはカードが透明になりきってから投げる（入れ替わりを隠すため）ので、
+    // そこまで進める。
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
   }
 
   testWidgets('左へ払うと次の曲', (tester) async {
@@ -68,6 +71,9 @@ void main() {
     // 50px。タッチスロップ（18px）を引くと 32px で、しきい値 42px には届かない。
     await tester.fling(find.byType(SwipeSkip), const Offset(-50, 0), 900);
     await tester.pump();
+    // 払った直後はまだ投げない。カードが消えたところで 1 回だけ投げる。
+    expect(calls, isEmpty);
+    await tester.pump(const Duration(milliseconds: 200));
     expect(calls, ['next']);
   });
 

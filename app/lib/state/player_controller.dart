@@ -76,6 +76,19 @@ class PlayerController extends ChangeNotifier {
   int _boundaryRetries = 0;
   String? _lastQueueKey;
 
+  /// 曲送りで先に画面を書き換えたときの、書き換え前の曲の URI。
+  /// Spotify の再生状態は数百 ms 遅れて追いつくので、この URI を返してくる
+  /// 間のポーリング結果は「まだ古い」とみなして捨てる。捨てないと
+  /// 前の曲が一瞬戻ってから次の曲に変わる（＝スワイプがちらつく）。
+  String? _staleUri;
+
+  /// 上を捨て続ける期限。ここを過ぎたら諦めて真の状態を採る。
+  DateTime? _skipUntil;
+
+  /// 前の曲へ戻すとき用の再生履歴。新しいものが末尾。
+  final List<Track> _history = [];
+  static const _historyLimit = 20;
+
   /// 出しっぱなしにすべき失敗。通信のブレではなく Spotify 側の返答。
   static bool _isHardError(SpotifyApiException e) =>
       e.statusCode == 429 || e.statusCode == 403 || e.statusCode == 402;
@@ -232,9 +245,17 @@ class PlayerController extends ChangeNotifier {
     _polling = true;
     try {
       final state = await _api.playbackState();
+      _pollFailures = 0;
+      if (_isStaleAfterSkip(state)) {
+        // まだ送る前の曲が返ってきている。先に出した次の曲を残したまま、
+        // finally のスケジューラに任せてすぐ訊き直す。
+        return;
+      }
+      _staleUri = null;
+      _skipUntil = null;
+      _pushHistoryIfChanged(state.track);
       _playback = state;
       _playbackFetchedAt = _now();
-      _pollFailures = 0;
       _errorBanner = null;
       if (state.hasContent) {
         // 再生できているならデバイスは生きている。
@@ -296,6 +317,10 @@ class PlayerController extends ChangeNotifier {
       // バナーの「あと N」が固まったままになるので、最長 1 分で起こして出し直す。
       // 待機中は [SpotifyApi._send] が通信前に弾くので追加のリクエストは出ない。
       return _atMost(cooldown + const Duration(milliseconds: 250), _heartbeat);
+    }
+    // 曲送りの反映待ち。追いつくまで短い間隔で訊き直す。
+    if (_skipUntil != null && _now().isBefore(_skipUntil!)) {
+      return const Duration(milliseconds: 350);
     }
     if (_pollFailures > 0) {
       // 失敗が続いている間は下がっていく。回復したら 0 に戻る。
@@ -518,14 +543,124 @@ class PlayerController extends ChangeNotifier {
 
   Future<void> skipNext() async {
     if (_deviceLost) return;
-    await _guard(_api.next);
+    // キューの先頭が分かっているなら、返事を待たずにそこへ進めてしまう。
+    final target = nextTrack;
+    final undo = _beginOptimisticSkip(
+      target,
+      queue: _queue.upcoming.length > 1
+          ? QueueSnapshot(upcoming: _queue.upcoming.sublist(1))
+          : QueueSnapshot.empty,
+      pushCurrentToHistory: true,
+    );
+    if (!await _guard(_api.next)) {
+      _undoOptimisticSkip(undo);
+      return;
+    }
     await _afterCommand();
   }
 
   Future<void> skipPrevious() async {
     if (_deviceLost) return;
-    await _guard(_api.previous);
+    // 履歴があるときだけ先に戻す。無ければ従来どおり結果を待つ。
+    final target = _history.isEmpty ? null : _history.last;
+    final undo = _beginOptimisticSkip(
+      target,
+      // 戻ると今の曲がキューの先頭に来る。真の並びは次のポーリングで入れ替わる。
+      queue: target == null
+          ? _queue
+          : QueueSnapshot(
+              upcoming: [?currentTrack, ..._queue.upcoming],
+            ),
+      popHistory: true,
+    );
+    if (!await _guard(_api.previous)) {
+      _undoOptimisticSkip(undo);
+      return;
+    }
     await _afterCommand();
+  }
+
+  /// 曲送りの見た目だけ先に進める。[target] が null なら何もしない。
+  /// 戻り値は取り消し用のスナップショット。
+  _SkipUndo? _beginOptimisticSkip(
+    Track? target, {
+    required QueueSnapshot queue,
+    bool pushCurrentToHistory = false,
+    bool popHistory = false,
+  }) {
+    if (target == null || isStopped) return null;
+    final undo = _SkipUndo(
+      playback: _playback,
+      fetchedAt: _playbackFetchedAt,
+      queue: _queue,
+      staleUri: _staleUri,
+      skipUntil: _skipUntil,
+      history: List.of(_history),
+    );
+
+    if (pushCurrentToHistory) _pushHistory(currentTrack);
+    if (popHistory && _history.isNotEmpty) _history.removeLast();
+
+    _staleUri = currentTrack?.uri;
+    // 反映がここまでに来なければ諦めて真の状態に従う。
+    _skipUntil = _now().add(const Duration(seconds: 5));
+    _playback = PlaybackState(
+      isPlaying: true,
+      progressMs: 0,
+      shuffleState: _playback.shuffleState,
+      hasContent: true,
+      track: target,
+      device: _playback.device,
+      contextUri: _playback.contextUri,
+    );
+    _playbackFetchedAt = _now();
+    _queue = queue;
+    _lastQueueKey = target.uri;
+    _boundaryRetries = 0;
+    unawaited(_updatePalette(target));
+    _syncTicker();
+    notifyListeners();
+    return undo;
+  }
+
+  /// 送りに失敗したときの巻き戻し。エラー自体は [_guard] がバナーに出す。
+  void _undoOptimisticSkip(_SkipUndo? undo) {
+    if (undo == null) return;
+    _playback = undo.playback;
+    _playbackFetchedAt = undo.fetchedAt;
+    _queue = undo.queue;
+    _staleUri = undo.staleUri;
+    _skipUntil = undo.skipUntil;
+    _history
+      ..clear()
+      ..addAll(undo.history);
+    _lastQueueKey = undo.playback.track?.uri;
+    unawaited(_updatePalette(undo.playback.track));
+    _syncTicker();
+    notifyListeners();
+  }
+
+  /// 先に出した次の曲より、返ってきた状態のほうが古いか。
+  bool _isStaleAfterSkip(PlaybackState state) {
+    final until = _skipUntil;
+    if (until == null) return false;
+    if (!_now().isBefore(until)) return false;
+    // 送る前の曲がそのまま返っている間だけ待つ。別の曲になっていれば
+    // 他のクライアントからの操作なので、素直に従う。
+    return state.track?.uri != null && state.track?.uri == _staleUri;
+  }
+
+  void _pushHistory(Track? track) {
+    if (track == null) return;
+    if (_history.isNotEmpty && _history.last.uri == track.uri) return;
+    _history.add(track);
+    if (_history.length > _historyLimit) _history.removeAt(0);
+  }
+
+  /// ポーリングで曲が変わっていたら、鳴り終わったほうを履歴に積む。
+  void _pushHistoryIfChanged(Track? incoming) {
+    if (incoming?.uri == _playback.track?.uri) return;
+    _pushHistory(_playback.track);
   }
 
   Future<void> setShuffle(bool value) async {
@@ -698,6 +833,25 @@ class PlayerController extends ChangeNotifier {
         .withSaturation((hsl.saturation * 0.8).clamp(0.0, 1.0))
         .toColor();
   }
+}
+
+/// 曲送りを先に画面へ出す前の状態。失敗したらここへ戻す。
+class _SkipUndo {
+  const _SkipUndo({
+    required this.playback,
+    required this.fetchedAt,
+    required this.queue,
+    required this.staleUri,
+    required this.skipUntil,
+    required this.history,
+  });
+
+  final PlaybackState playback;
+  final DateTime fetchedAt;
+  final QueueSnapshot queue;
+  final String? staleUri;
+  final DateTime? skipUntil;
+  final List<Track> history;
 }
 
 extension _FirstOrNull<T> on Iterable<T> {
