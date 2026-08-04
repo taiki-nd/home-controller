@@ -2,11 +2,14 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 
+import '../models/release_models.dart';
 import '../models/spotify_models.dart';
+import '../state/new_releases_controller.dart';
 import '../state/player_controller.dart';
 import '../theme/tokens.dart';
 import 'widgets/atoms.dart';
 import 'widgets/marquee_text.dart';
+import 'widgets/new_releases_panel.dart';
 import 'widgets/orbiting_light.dart';
 import 'widgets/panels.dart';
 import 'widgets/soft_surface.dart';
@@ -24,15 +27,19 @@ class TabletLayout extends StatelessWidget {
   const TabletLayout({
     super.key,
     required this.controller,
+    required this.newReleases,
     required this.onPlayNow,
     required this.onPlayPlaylist,
+    required this.onPlayRelease,
     required this.attribution,
     required this.topInset,
   });
 
   final PlayerController controller;
+  final NewReleasesController newReleases;
   final ValueChanged<Track> onPlayNow;
   final ValueChanged<PlaylistSummary> onPlayPlaylist;
+  final ValueChanged<NewRelease> onPlayRelease;
   final Widget attribution;
 
   /// ステータスバー + 停止バナーぶん、中身を押し下げる。面の塗りは下げない。
@@ -57,8 +64,10 @@ class TabletLayout extends StatelessWidget {
           width: 452,
           child: _Rail(
             controller: controller,
+            newReleases: newReleases,
             onPlayNow: onPlayNow,
             onPlayPlaylist: onPlayPlaylist,
+            onPlayRelease: onPlayRelease,
             topInset: topInset,
           ),
         ),
@@ -208,14 +217,18 @@ class _DevicePill extends StatelessWidget {
 class _Rail extends StatelessWidget {
   const _Rail({
     required this.controller,
+    required this.newReleases,
     required this.onPlayNow,
     required this.onPlayPlaylist,
+    required this.onPlayRelease,
     required this.topInset,
   });
 
   final PlayerController controller;
+  final NewReleasesController newReleases;
   final ValueChanged<Track> onPlayNow;
   final ValueChanged<PlaylistSummary> onPlayPlaylist;
+  final ValueChanged<NewRelease> onPlayRelease;
 
   /// 面はここも含めて塗り、進捗バーだけこのぶん下げる。
   /// ステータスバーの帯をレールの色で塗り分けているのがこれ。
@@ -272,6 +285,11 @@ class _Rail extends StatelessWidget {
                       controller: controller,
                       compact: false,
                       onPlay: onPlayPlaylist,
+                    ),
+                    RailTab.newReleases => NewReleasesPanel(
+                      controller: newReleases,
+                      compact: false,
+                      onPlay: onPlayRelease,
                     ),
                   },
                 ),

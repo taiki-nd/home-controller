@@ -42,6 +42,10 @@ class AuthService extends ChangeNotifier {
   static const _kAccessToken = 'spotify_access_token';
   static const _kExpiresAt = 'spotify_access_token_expires_at';
 
+  /// 認可を通したときの scope 一覧。**このキーが無い＝ scope を記録する前の
+  /// バージョンでログインした古いトークン**、と読む（[needsReauthorization]）。
+  static const _kGrantedScopes = 'spotify_granted_scopes';
+
   static const _serviceConfiguration = AuthorizationServiceConfiguration(
     authorizationEndpoint: SpotifyConfig.authorizationEndpoint,
     tokenEndpoint: SpotifyConfig.tokenEndpoint,
@@ -63,6 +67,7 @@ class AuthService extends ChangeNotifier {
   String? _accessToken;
   DateTime? _expiresAt;
   String? _refreshToken;
+  Set<String> _grantedScopes = const {};
 
   bool _restored = false;
   bool _busy = false;
@@ -76,6 +81,21 @@ class AuthService extends ChangeNotifier {
   bool get isBusy => _busy;
   String? get error => _error;
 
+  /// [SpotifyConfig.scopes] のうち、保存済みトークンが持っていないもの。
+  Set<String> get missingScopes =>
+      SpotifyConfig.scopes.toSet().difference(_grantedScopes);
+
+  /// scope を足したあと、まだ再連携していない状態。
+  ///
+  /// 叩いて 403 を見てから気づくのでは「原因の分からないエラー」にしかならない
+  /// ので、リクエストを 1 本も使わずに手前で判定する。判定材料は「認可を通した
+  /// ときに要求した scope」で、Spotify は要求どおりに出すか丸ごと拒否するかの
+  /// どちらかなので、これで足りる。
+  ///
+  /// ただしユーザーがアカウント設定側で権限を剥がした場合はここをすり抜ける。
+  /// その取りこぼしは [SpotifyScopeException] が実行時に拾う。
+  bool get needsReauthorization => isSignedIn && missingScopes.isNotEmpty;
+
   /// 起動時に一度だけ呼ぶ。保存済みトークンを読み戻す。
   Future<void> restore() async {
     if (_restored) return;
@@ -84,12 +104,14 @@ class AuthService extends ChangeNotifier {
       _accessToken = await _storage.read(key: _kAccessToken);
       final raw = await _storage.read(key: _kExpiresAt);
       _expiresAt = raw == null ? null : DateTime.tryParse(raw);
+      _grantedScopes = _decodeScopes(await _storage.read(key: _kGrantedScopes));
     } catch (e) {
       // Keychain / KeyStore が壊れている場合。読めないなら未ログイン扱いで良い。
       debugPrint('AuthService.restore failed: $e');
       _refreshToken = null;
       _accessToken = null;
       _expiresAt = null;
+      _grantedScopes = const {};
     }
     _restored = true;
     notifyListeners();
@@ -124,6 +146,9 @@ class AuthService extends ChangeNotifier {
         accessToken: result.accessToken,
         refreshToken: result.refreshToken,
         expiresAt: result.accessTokenExpirationDateTime,
+        // scope が増えるのは認可を通したときだけ。リフレッシュでは増えないので
+        // ここでしか書かない。
+        grantedScopes: SpotifyConfig.scopes.toSet(),
       ).timeout(_storageTimeout);
       return isSignedIn;
     } on TimeoutException {
@@ -143,13 +168,22 @@ class AuthService extends ChangeNotifier {
     }
   }
 
+  /// 足りない scope を取り直す。同意画面をもう一度通すだけで、サインアウトは
+  /// 挟まない（トークンは [_persist] が上書きする）。
+  ///
+  /// 中身は [signIn] と同じだが、呼び出し側の意図が「ログイン」ではなく
+  /// 「権限の追加」なので名前を分けている。
+  Future<bool> reauthorize() => signIn();
+
   Future<void> signOut() async {
     _accessToken = null;
     _refreshToken = null;
     _expiresAt = null;
+    _grantedScopes = const {};
     await _storage.delete(key: _kAccessToken);
     await _storage.delete(key: _kRefreshToken);
     await _storage.delete(key: _kExpiresAt);
+    await _storage.delete(key: _kGrantedScopes);
     notifyListeners();
   }
 
@@ -223,7 +257,15 @@ class AuthService extends ChangeNotifier {
     required String? accessToken,
     required String? refreshToken,
     required DateTime? expiresAt,
+    Set<String>? grantedScopes,
   }) async {
+    if (grantedScopes != null) {
+      _grantedScopes = grantedScopes;
+      await _storage.write(
+        key: _kGrantedScopes,
+        value: grantedScopes.join(' '),
+      );
+    }
     if (accessToken != null) {
       _accessToken = accessToken;
       await _storage.write(key: _kAccessToken, value: accessToken);
@@ -240,6 +282,15 @@ class AuthService extends ChangeNotifier {
       );
     }
     notifyListeners();
+  }
+
+  /// OAuth の scope は空白区切り。念のため他の区切りも受ける。
+  static Set<String> _decodeScopes(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return const {};
+    return raw
+        .split(RegExp(r'[\s,]+'))
+        .where((s) => s.isNotEmpty)
+        .toSet();
   }
 
   String _describeTimeout(_SignInStage stage) => switch (stage) {

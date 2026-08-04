@@ -34,11 +34,20 @@ class SpotifyConfig {
   static const tokenEndpoint = 'https://accounts.spotify.com/api/token';
   static const apiBaseUrl = 'https://api.spotify.com/v1';
 
+  /// **ここに足したら、既存ユーザーは全員が再連携するまで新しい scope を使えない。**
+  ///
+  /// 保存済みの refresh_token は認可されたときの scope を持ったままで、
+  /// リフレッシュしても増えない。足りない scope のエンドポイントを叩くと
+  /// 403 `Insufficient client scope` になる（[SpotifyScopeException]）。
+  /// [AuthService.needsReauthorization] が「保存済みの scope がここに追いつい
+  /// ていない」を見ているので、追加したら必ずそちらの導線も確認する。
   static const scopes = <String>[
     'user-read-playback-state',
     'user-modify-playback-state',
     'playlist-read-private',
     'playlist-read-collaborative',
+    // フォロー中アーティスト（`GET /me/following`）。新譜の母集団に使う。
+    'user-follow-read',
   ];
 
   static bool get isConfigured => clientId.isNotEmpty;

@@ -15,9 +15,12 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'models/release_models.dart';
 import 'models/spotify_models.dart';
 import 'services/auth_service.dart';
+import 'services/musicbrainz_api.dart';
 import 'services/spotify_api.dart';
+import 'state/new_releases_controller.dart';
 import 'state/player_controller.dart';
 import 'theme/tokens.dart';
 import 'ui/controller_screen.dart';
@@ -55,6 +58,11 @@ class MockApp extends StatefulWidget {
 class _MockAppState extends State<MockApp> {
   late final _MockAuth _auth = _MockAuth();
   late final _MockApi _api = _MockApi(_auth);
+  late final _MockMusicBrainz _musicBrainz = _MockMusicBrainz();
+  late final NewReleasesController _newReleases = NewReleasesController(
+    _api,
+    _musicBrainz,
+  );
 
   /// 起動時は ?device=iphone / ?device=ipad を見る。無ければウィンドウ追従。
   _Stage _stage = _Stage.values.firstWhere(
@@ -121,6 +129,8 @@ class _MockAppState extends State<MockApp> {
         return ControllerScreen(
           key: ValueKey(player),
           controller: player,
+          newReleases: _newReleases,
+          resolver: ReleaseResolver(_api),
           onSignOut: _auth.signOut,
         );
       },
@@ -617,5 +627,51 @@ class _MockApi extends SpotifyApi {
     _activeDeviceId = deviceId;
     _playing = play;
     _seek(at);
+  }
+}
+
+/// 新譜まわりの偽物。ネットワークに出ずに「New」タブの見た目を確認するためだけ。
+/// ジャケットは web/mock を使うので Cover Art Archive にも出ない。
+class _MockMusicBrainz extends MusicBrainzApi {
+  @override
+  Future<Map<String, String>> artistMbidsBySpotifyUrl(
+    List<String> spotifyUrls,
+  ) async {
+    await Future<void>.delayed(const Duration(milliseconds: 240));
+    // わざと 1 組だけ解決できないことにして、カバー率の表示を確認できるようにする。
+    final resolved = spotifyUrls.take(spotifyUrls.length - 1);
+    return {
+      for (final (index, url) in resolved.indexed) url: 'mbid-artist-$index',
+    };
+  }
+
+  @override
+  Future<List<NewRelease>> releaseGroups({
+    required List<String> artistMbids,
+    required DateTime from,
+    required DateTime to,
+  }) async {
+    await Future<void>.delayed(const Duration(milliseconds: 320));
+    final today = DateTime.now();
+    NewRelease make(String title, String artist, int offsetDays, int art) =>
+        NewRelease(
+          releaseGroupMbid: 'mock-${title.hashCode}',
+          title: title,
+          artistName: artist,
+          artistMbids: const ['mbid-artist-0'],
+          releaseDate: DateTime(
+            today.year,
+            today.month,
+            today.day,
+          ).add(Duration(days: offsetDays)),
+          primaryType: 'Album',
+        );
+    return [
+      make('Melting Days', 'Lusine', 17, 1),
+      make('Sunshine', 'Jungle', 10, 2),
+      make('II Reworked', 'Kiasmos', 3, 3),
+      make('Frozen Charlotte', 'Jack White', -6, 4),
+      make('A ? of WHEN', 'Panda Bear & Sonic Boom', -21, 1),
+    ];
   }
 }

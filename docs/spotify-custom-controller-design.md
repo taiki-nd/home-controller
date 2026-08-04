@@ -199,7 +199,23 @@ iOSのバックグラウンド接続断問題も発生しない。
 
 - **Authorization Code + PKCE 必須**（Implicit Grantは2025年11月廃止）
 - スコープ: `user-read-playback-state` / `user-modify-playback-state` /
-  `playlist-read-private` / `playlist-read-collaborative`
+  `playlist-read-private` / `playlist-read-collaborative` /
+  `user-follow-read`（新譜用・§14）
+
+#### スコープを追加したときの既存ユーザー
+
+**保存済みの refresh_token は認可時のスコープを持ったままで、リフレッシュしても増えない。**
+足りないスコープのエンドポイントは 403 `Insufficient client scope` になる。
+
+叩いて 403 を見てから気づくと原因不明のエラーにしか見えないので、
+`AuthService` が「認可時に要求したスコープ」を secure storage に記録し、
+`needsReauthorization` で**リクエストを 1 本も使わずに**手前で判定する。
+判定が立ったら再連携バナーを出し、`reauthorize()`（同意画面をもう一度通すだけ。
+サインアウトは挟まない）で解消する。
+
+記録が無い＝この仕組みより前にログインしたトークン、と読む。
+アカウント設定側で権限を剥がされた場合だけはここをすり抜けるので、
+実行時の受け皿として `SpotifyScopeException` を別に持つ。
 
 ---
 
@@ -219,6 +235,7 @@ iOSのバックグラウンド接続断問題も発生しない。
 | シャッフル切替 | `PUT /me/player/shuffle` |
 | 音量 | `PUT /me/player/volume` |
 | プレイリスト一覧 | `GET /me/playlists` |
+| フォロー中アーティスト（§14） | `GET /me/following?type=artist` |
 
 参照: https://developer.spotify.com/documentation/web-api/references/changes/february-2026
 
@@ -365,6 +382,76 @@ Spotify SDK系のネイティブプラグインは**不要**。
 - `LayoutBuilder` でブレークポイント切り替え
 - 横幅が取れるときはアートワーク大判 + 情報を横並び
 - キュー一覧は iPad では常時サイドに表示、スマホではボトムシート
+
+---
+
+---
+
+## 14. 新譜キャッチ（MusicBrainz 併用）
+
+**フォロー中アーティストの新譜を出す。母集団は Spotify、リリース情報は MusicBrainz。**
+
+### なぜ Spotify だけで完結させないか
+
+- `GET /browse/new-releases` は2026年2月に**削除済み**。Spotify に新譜フィードが無い
+- 残る手は「フォロー中アーティストを1人ずつ `GET /artists/{id}/albums` で舐める」だけで、
+  これはフォロー数ぶんのリクエストになる
+- **その失敗の仕方がこのアプリでは致命的。** 429 中は `SpotifyApi._send` が通信前に
+  全リクエストを弾く（再生操作も含む）。Development Mode の `Retry-After` は
+  数時間になり得るので、裏のクロールがコントローラごと止める
+
+負荷を MusicBrainz 側（1 req/sec）に逃がせば、この事故が原理的に起きない。
+
+### 実測（2026-08-04）
+
+| 確認したこと | 結果 |
+|---|---|
+| Spotify アーティストID → MBID | `GET /ws/2/url?resource=https://open.spotify.com/artist/{id}&inc=artist-rels` で引ける。**名寄せ不要** |
+| 1クエリにまとめられる arid 数 | 100 は 200 OK（URL 4,535字）／ 200 は **414 URI Too Long** |
+| 日付での絞り込み | `arid:(a OR b …) AND firstreleasedate:[YYYY-MM-DD TO YYYY-MM-DD]` |
+| ノイズ落とし | `AND primarytype:(Album OR EP) AND -secondarytype:*` で 10件 → 3件 |
+| User-Agent | **必須。**無しは 403 |
+
+### リクエスト予算（フォロー200人）
+
+| タイミング | Spotify | MusicBrainz |
+|---|---|---|
+| 初回のみ | `/me/following` 4 | URL→MBID 2 |
+| 毎日 | 0 | release-group 2 |
+| 行をタップ | search 1 + album tracks 1 | 0 |
+
+### フォローの変更検知
+
+**差分APIは無い。**`followed_at` のようなタイムスタンプが返らず、Spotify に push も無い。
+`total` は返るので1リクエストで件数だけ見られるが、**フォローとアンフォローが同数だと
+素通りする**ので変更検知の根拠にはできない。ETag は 304 でもリクエスト数を消費するため、
+制約（レート制限）の効いている軸に効かない。
+
+→ **毎回全件取ってローカルで集合差分を取る。**200人で4リクエストなので節約する価値がない。
+差分を取る唯一の実利は、新規アーティストぶんだけ MBID を引けばよくなること（MBID は
+変わらないので一度引けば永久にキャッシュできる）。
+
+**`GET /me/following` の戻り値の順序に意味を持たせてはいけない。**
+カーソル（`after`）の並び順は仕様に定義がなく、ページング中にフォローが増減すると
+取りこぼしや重複が起こり得る。集合として扱えば実害が消える。
+
+### 未確定・未検証
+
+- **Spotify URL 関連のカバー率。**ボランティア入力なので全員には付いていない
+  （3件テストで2件）。実際のフォロー一覧で測ってから New タブの設計を決める
+- `first-release-date` は世界初出なので Spotify の配信日とズレる
+- MusicBrainz には Spotify に無いリリースも入る。解決失敗の状態が UI に要る
+- ランキング指標が無い（フォローは全員平等）。必要なら ListenBrainz の
+  `confidence` を後から足す。`release_group_mbid` が共通キーになる
+- 「発売日に自動でプレイリストへ」はサーバー無しでは成立しない。
+  実際には「アプリを開いたときに気づく」になる
+
+### 併記: ListenBrainz `fresh_releases`
+
+同じ MetaBrainz のデータで、`GET /1/user/{user_name}/fresh_releases` は認証不要・1リクエスト。
+`confidence` / `listen_count` によるランキングと Cover Art Archive の画像 ID が付く。
+**ただし母集団がリスニング履歴なので、「フォロー中アーティスト」という要件とは別物。**
+LB アカウントと Spotify 連携も要る。今回は採用しないが、ランキングの補強として後付けできる。
 
 ---
 

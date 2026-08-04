@@ -128,6 +128,90 @@ class PlaylistSummary {
   }
 }
 
+/// `GET /me/following?type=artist` の 1 件。新譜の母集団に使う。
+class FollowedArtist {
+  const FollowedArtist({
+    required this.id,
+    required this.uri,
+    required this.name,
+    this.artworkUrl,
+  });
+
+  final String id;
+  final String uri;
+  final String name;
+  final String? artworkUrl;
+
+  /// MusicBrainz 側で MBID を引くためのキー。
+  ///
+  /// MusicBrainz はアーティストに Spotify の URL を関連として持っているので、
+  /// `GET /ws/2/url?resource=<これ>&inc=artist-rels` で名寄せ無しに MBID が
+  /// 引ける。**ただし関連はボランティア入力なので全員には付いていない。**
+  String get musicBrainzLookupUrl => 'https://open.spotify.com/artist/$id';
+
+  static FollowedArtist? fromJson(Map<String, dynamic>? json) {
+    if (json == null) return null;
+    final id = json['id'];
+    if (id is! String) return null;
+    return FollowedArtist(
+      id: id,
+      uri: json['uri'] as String? ?? 'spotify:artist:$id',
+      name: json['name'] as String? ?? 'Unknown artist',
+      artworkUrl: SpotifyImage.pick(
+        json['images'] as List<dynamic>?,
+        minWidth: 160,
+      )?.url,
+    );
+  }
+}
+
+/// `GET /search?type=album` の 1 件。
+///
+/// MusicBrainz の新譜（[NewRelease]）を Spotify で鳴らすために引き当てる先。
+/// Spotify は MBID を知らないので、これは**文字列検索の当たり**でしかない。
+class SpotifyAlbumMatch {
+  const SpotifyAlbumMatch({
+    required this.id,
+    required this.uri,
+    required this.name,
+    required this.artists,
+    required this.totalTracks,
+    this.artworkUrl,
+    this.releaseDate,
+  });
+
+  final String id;
+  final String uri;
+  final String name;
+  final String artists;
+  final int totalTracks;
+  final String? artworkUrl;
+  final String? releaseDate;
+
+  static SpotifyAlbumMatch? fromJson(Map<String, dynamic>? json) {
+    if (json == null) return null;
+    final uri = json['uri'];
+    if (uri is! String) return null;
+    final artistList = (json['artists'] as List<dynamic>? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .map((a) => a['name'])
+        .whereType<String>()
+        .toList();
+    return SpotifyAlbumMatch(
+      id: json['id'] as String? ?? uri,
+      uri: uri,
+      name: json['name'] as String? ?? '—',
+      artists: artistList.join(', '),
+      totalTracks: (json['total_tracks'] as num?)?.toInt() ?? 0,
+      artworkUrl: SpotifyImage.pick(
+        json['images'] as List<dynamic>?,
+        minWidth: 160,
+      )?.url,
+      releaseDate: json['release_date'] as String?,
+    );
+  }
+}
+
 enum SpotifyDeviceKind { speaker, tv, smartphone, computer, other }
 
 class SpotifyDevice {

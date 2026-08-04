@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../models/release_models.dart';
 import '../models/spotify_models.dart';
+import '../services/spotify_api.dart';
+import '../state/new_releases_controller.dart';
 import '../state/player_controller.dart';
 import '../theme/tokens.dart';
 import 'phone_layout.dart';
@@ -13,11 +16,23 @@ class ControllerScreen extends StatefulWidget {
   const ControllerScreen({
     super.key,
     required this.controller,
+    required this.newReleases,
+    required this.resolver,
     required this.onSignOut,
+    this.needsReauthorization = false,
+    this.authBusy = false,
+    this.onReauthorize,
   });
 
   final PlayerController controller;
+  final NewReleasesController newReleases;
+  final ReleaseResolver resolver;
   final VoidCallback onSignOut;
+
+  /// scope を足したあと、まだ再連携していない（[AuthService.needsReauthorization]）。
+  final bool needsReauthorization;
+  final bool authBusy;
+  final VoidCallback? onReauthorize;
 
   @override
   State<ControllerScreen> createState() => _ControllerScreenState();
@@ -27,6 +42,10 @@ class _ControllerScreenState extends State<ControllerScreen>
     with WidgetsBindingObserver {
   Track? _pendingPlayNow;
   PlaylistSummary? _pendingPlaylist;
+  SpotifyAlbumMatch? _pendingAlbum;
+
+  /// 再連携バナーを閉じたか。次の起動ではまた出る（永続化しない）。
+  bool _reauthDismissed = false;
 
   @override
   void initState() {
@@ -126,8 +145,10 @@ class _ControllerScreenState extends State<ControllerScreen>
                       child: wide
                           ? TabletLayout(
                               controller: controller,
+                              newReleases: widget.newReleases,
                               onPlayNow: _askPlayNow,
                               onPlayPlaylist: _askPlaylist,
+                              onPlayRelease: _askRelease,
                               topInset: contentTop,
                               attribution: _Attribution(
                                 controller: controller,
@@ -136,8 +157,10 @@ class _ControllerScreenState extends State<ControllerScreen>
                             )
                           : PhoneLayout(
                               controller: controller,
+                              newReleases: widget.newReleases,
                               onPlayNow: _askPlayNow,
                               onPlayPlaylist: _askPlaylist,
+                              onPlayRelease: _askRelease,
                               topInset: contentTop,
                               attribution: _Attribution(
                                 controller: controller,
@@ -166,6 +189,19 @@ class _ControllerScreenState extends State<ControllerScreen>
                         child: ErrorBanner(
                           message: controller.errorBanner!,
                           onDismiss: controller.dismissError,
+                        ),
+                      )
+                    // エラーと同じ場所なので、出るときはエラーを優先する。
+                    else if (widget.needsReauthorization && !_reauthDismissed)
+                      Positioned(
+                        top: contentTop,
+                        left: 0,
+                        right: 0,
+                        child: ReauthBanner(
+                          busy: widget.authBusy,
+                          onReauthorize: widget.onReauthorize ?? () {},
+                          onDismiss: () =>
+                              setState(() => _reauthDismissed = true),
                         ),
                       ),
 
@@ -226,6 +262,20 @@ class _ControllerScreenState extends State<ControllerScreen>
                         ),
                       ),
 
+                    if (_pendingAlbum != null)
+                      Positioned.fill(
+                        child: ReleasePlayConfirm(
+                          album: _pendingAlbum!,
+                          queueCount: controller.upNext.length,
+                          onConfirm: () {
+                            final album = _pendingAlbum!;
+                            setState(() => _pendingAlbum = null);
+                            controller.playAlbum(album);
+                          },
+                          onCancel: () => setState(() => _pendingAlbum = null),
+                        ),
+                      ),
+
                     if (controller.toast != null)
                       Positioned(
                         left: 20,
@@ -244,6 +294,29 @@ class _ControllerScreenState extends State<ControllerScreen>
   }
 
   void _askPlayNow(Track track) => setState(() => _pendingPlayNow = track);
+
+  /// 新譜の行を押したとき。**ここで初めて Spotify を叩く**（設計メモ §14）。
+  /// リスト全体を解決しないのは、1 行あたり検索 1 回のコストがかかるため。
+  Future<void> _askRelease(NewRelease release) async {
+    final controller = widget.controller;
+    if (release.isUpcoming(DateTime.now())) {
+      // 未発売は Spotify にまだ存在しない。探しに行くだけ無駄になる。
+      controller.showToast('${release.dateLabel(DateTime.now())}に発売予定です');
+      return;
+    }
+    controller.showToast('Spotify で探しています…');
+    try {
+      final album = await widget.resolver.resolve(release);
+      if (!mounted) return;
+      if (album == null) {
+        controller.showToast('Spotify で見つかりませんでした');
+        return;
+      }
+      setState(() => _pendingAlbum = album);
+    } on SpotifyApiException catch (e) {
+      if (mounted) controller.showToast(e.message);
+    }
+  }
 
   void _askPlaylist(PlaylistSummary playlist) =>
       setState(() => _pendingPlaylist = playlist);

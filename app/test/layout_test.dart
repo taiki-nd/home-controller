@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:spotify_remote/models/spotify_models.dart';
 import 'package:spotify_remote/services/auth_service.dart';
+import 'package:spotify_remote/services/musicbrainz_api.dart';
 import 'package:spotify_remote/services/spotify_api.dart';
+import 'package:spotify_remote/state/new_releases_controller.dart';
 import 'package:spotify_remote/state/player_controller.dart';
 import 'package:spotify_remote/theme/tokens.dart';
 import 'package:spotify_remote/ui/phone_layout.dart';
@@ -122,6 +124,19 @@ Widget wrap(Widget child, Size size) => MediaQuery(
   ),
 );
 
+/// New タブはここでは開かないので、通信に出ない空のコントローラで足りる。
+NewReleasesController _idleReleases() =>
+    NewReleasesController(_NeverApi(AuthService()), MusicBrainzApi());
+
+/// 呼ばれたら気づけるように、通信ではなく例外で落とす。
+class _NeverApi extends SpotifyApi {
+  _NeverApi(super.auth);
+
+  @override
+  Future<List<FollowedArtist>> followedArtists() =>
+      throw StateError('layout テストで followedArtists が呼ばれた');
+}
+
 void main() {
   // デザインの実寸。ここでオーバーフローすると本番でも赤縞が出る。
   const ipad = Size(1194, 834);
@@ -137,8 +152,10 @@ void main() {
       wrap(
         TabletLayout(
           controller: controller,
+          newReleases: _idleReleases(),
           onPlayNow: (_) {},
           onPlayPlaylist: (_) {},
+          onPlayRelease: (_) {},
           attribution: const SizedBox.shrink(),
           topInset: 0,
         ),
@@ -166,8 +183,10 @@ void main() {
       wrap(
         PhoneLayout(
           controller: controller,
+          newReleases: _idleReleases(),
           onPlayNow: (_) {},
           onPlayPlaylist: (_) {},
+          onPlayRelease: (_) {},
           attribution: const SizedBox.shrink(),
           topInset: 0,
         ),
@@ -211,15 +230,19 @@ void main() {
         phone
             ? PhoneLayout(
                 controller: controller,
+                newReleases: _idleReleases(),
                 onPlayNow: (_) {},
                 onPlayPlaylist: (_) {},
+                onPlayRelease: (_) {},
                 attribution: const SizedBox.shrink(),
                 topInset: 0,
               )
             : TabletLayout(
                 controller: controller,
+                newReleases: _idleReleases(),
                 onPlayNow: (_) {},
                 onPlayPlaylist: (_) {},
+                onPlayRelease: (_) {},
                 attribution: const SizedBox.shrink(),
                 topInset: 0,
               ),
@@ -290,8 +313,10 @@ void main() {
       wrap(
         PhoneLayout(
           controller: controller,
+          newReleases: _idleReleases(),
           onPlayNow: (_) {},
           onPlayPlaylist: (_) {},
+          onPlayRelease: (_) {},
           attribution: const SizedBox.shrink(),
           topInset: 0,
         ),
@@ -322,8 +347,10 @@ void main() {
       wrap(
         TabletLayout(
           controller: controller,
+          newReleases: _idleReleases(),
           onPlayNow: (_) {},
           onPlayPlaylist: (_) {},
+          onPlayRelease: (_) {},
           attribution: const SizedBox.shrink(),
           topInset: 0,
         ),
@@ -349,8 +376,10 @@ void main() {
       wrap(
         PhoneLayout(
           controller: controller,
+          newReleases: _idleReleases(),
           onPlayNow: (_) {},
           onPlayPlaylist: (_) {},
+          onPlayRelease: (_) {},
           attribution: const SizedBox.shrink(),
           topInset: 0,
         ),
@@ -379,8 +408,10 @@ void main() {
       wrap(
         TabletLayout(
           controller: controller,
+          newReleases: _idleReleases(),
           onPlayNow: (_) {},
           onPlayPlaylist: (_) {},
+          onPlayRelease: (_) {},
           attribution: const SizedBox.shrink(),
           topInset: 0,
         ),
@@ -405,8 +436,10 @@ void main() {
       wrap(
         PhoneLayout(
           controller: controller,
+          newReleases: _idleReleases(),
           onPlayNow: (_) {},
           onPlayPlaylist: (_) {},
+          onPlayRelease: (_) {},
           attribution: const SizedBox.shrink(),
           topInset: 0,
         ),
@@ -473,8 +506,10 @@ void main() {
         wrap(
           TabletLayout(
             controller: controller,
+            newReleases: _idleReleases(),
             onPlayNow: (_) {},
             onPlayPlaylist: (_) {},
+            onPlayRelease: (_) {},
             attribution: const SizedBox.shrink(),
             topInset: topInset,
           ),
@@ -514,8 +549,10 @@ void main() {
       wrap(
         PhoneLayout(
           controller: controller,
+          newReleases: _idleReleases(),
           onPlayNow: (_) {},
           onPlayPlaylist: (_) {},
+          onPlayRelease: (_) {},
           attribution: const SizedBox.shrink(),
           topInset: 72,
         ),

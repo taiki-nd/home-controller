@@ -40,6 +40,18 @@ class SpotifyAuthExpiredException extends SpotifyApiException {
   SpotifyAuthExpiredException() : super('再ログインが必要です', statusCode: 401);
 }
 
+/// 403 `Insufficient client scope`。トークン自体は生きているが、認可された
+/// scope にそのエンドポイントぶんが入っていない。
+///
+/// [SpotifyConfig.scopes] に追加したあと再連携していない既存ユーザーが必ず
+/// ここを踏む。普通の 403（Premium が要る等）と混ぜると「よく分からない
+/// エラー」になるので型を分ける。手前で防ぐのは
+/// [AuthService.needsReauthorization] の役目で、こちらは取りこぼしの受け皿。
+class SpotifyScopeException extends SpotifyApiException {
+  SpotifyScopeException()
+    : super('Spotify との再連携が必要です（権限が足りません）', statusCode: 403);
+}
+
 /// Spotify Web API クライアント。
 ///
 /// 中間サーバーは無く、全てここから直接叩く（設計メモ §13）。
@@ -138,6 +150,72 @@ class SpotifyApi {
       query: {'q': query, 'type': 'track', 'limit': 10, 'offset': offset},
     );
     return SearchPage.fromJson(_asMap(response.data));
+  }
+
+  /// `GET /search?type=album`。新譜（MusicBrainz 由来）を Spotify の
+  /// アルバムに引き当てるためだけに使う。
+  ///
+  /// [searchTracks] と同じく **`market=from_token` は付けない**（403 になる）。
+  /// limit 上限も同じく 10。関連度順で返るので先頭から見る。
+  Future<List<SpotifyAlbumMatch>> searchAlbums(String query) async {
+    if (query.trim().isEmpty) return const [];
+    final response = await _send(
+      'GET',
+      '/search',
+      query: {'q': query, 'type': 'album', 'limit': 10},
+    );
+    final block = _asMap(response.data)['albums'] as Map<String, dynamic>?;
+    final items = block?['items'] as List<dynamic>? ?? const [];
+    return items
+        .whereType<Map<String, dynamic>>()
+        .map(SpotifyAlbumMatch.fromJson)
+        .whereType<SpotifyAlbumMatch>()
+        .toList();
+  }
+
+  /// `GET /me/following?type=artist` を全ページ舐める。要 `user-follow-read`。
+  ///
+  /// **戻り値の順序に意味を持たせてはいけない。** カーソル（`after` = 最後に
+  /// 受け取ったアーティストID）の並び順は仕様に定義がなく、ページングの最中に
+  /// フォローが増減すると取りこぼしや重複が起こり得る。呼び出し側は集合として
+  /// 扱うこと（新譜の母集団を作るのが用途なので、それで困らない）。
+  ///
+  /// 差分だけを取る API は存在しない（`followed_at` も無い）。フォロー 200 人で
+  /// 4 リクエスト程度なので、毎回全部取ってローカルで差分を出すほうが、
+  /// `total` の増減を見るより確実（同数の入れ替えを取りこぼさない）。
+  Future<List<FollowedArtist>> followedArtists() async {
+    final artists = <FollowedArtist>[];
+    String? after;
+    // 万一 cursor が進まなくても無限ループにしない。50 件 × 40 ページ。
+    for (var page = 0; page < 40; page++) {
+      final response = await _send(
+        'GET',
+        '/me/following',
+        query: {
+          'type': 'artist',
+          'limit': 50,
+          'after': ?after,
+        },
+      );
+      final block = _asMap(response.data)['artists'];
+      if (block is! Map<String, dynamic>) break;
+      final items = block['items'] as List<dynamic>? ?? const [];
+      artists.addAll(
+        items
+            .whereType<Map<String, dynamic>>()
+            .map(FollowedArtist.fromJson)
+            .whereType<FollowedArtist>(),
+      );
+      if (block['next'] == null) return artists;
+      final next =
+          (block['cursors'] as Map<String, dynamic>?)?['after'] as String?;
+      // next はあるのに cursor が無い / 進んでいないなら、これ以上は追えない。
+      if (next == null || next == after) break;
+      after = next;
+    }
+    // next を辿り切る前に抜けた（cursor が壊れている / ページ上限）。
+    debugPrint('followedArtists: ページングを途中で打ち切り（${artists.length} 件）');
+    return artists;
   }
 
   Future<List<PlaylistSummary>> playlists({int limit = 50}) async {
@@ -289,9 +367,15 @@ class SpotifyApi {
         return _send(method, path, query: query, body: body, isRetry: true);
 
       case 403:
+        final message = _errorMessage(response);
+        // 「権限が足りない」と「Premium が要る」は同じ 403 で返るので、
+        // 文面でしか切り分けられない。
+        if (message != null &&
+            message.toLowerCase().contains('insufficient client scope')) {
+          throw SpotifyScopeException();
+        }
         throw SpotifyApiException(
-          _errorMessage(response) ??
-              'この操作は許可されていません（Premium アカウントが必要です）',
+          message ?? 'この操作は許可されていません（Premium アカウントが必要です）',
           statusCode: 403,
         );
 

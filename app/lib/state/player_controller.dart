@@ -10,7 +10,10 @@ import '../services/spotify_api.dart';
 import '../theme/tokens.dart';
 
 /// 右レール / ボトムシートのタブ。
-enum RailTab { queue, search, playlists }
+///
+/// **[RailTabs] は宣言順に `labels` を index で引く。** 並びを変えたり足したり
+/// したら、あちらの labels も同じ順で直すこと。
+enum RailTab { queue, search, playlists, newReleases }
 
 /// アートワークから抜いた 2 色。背景グラデーションにだけ使う。
 /// （Spotify デザインガイドライン上、アートワーク自体の加工はできない — 設計メモ §12）
@@ -688,6 +691,20 @@ class PlayerController extends ChangeNotifier {
     );
     if (!ok) return;
     showToast('「${track.name}」を再生します');
+    await _afterCommand();
+  }
+
+  /// 新譜のアルバムを base にして流す（設計メモ §14）。
+  ///
+  /// プレイリストと同じく context の差し替えなので、既存のキューは消える。
+  /// アルバムは曲順に意味があることが多いのでシャッフルは触らない。
+  Future<void> playAlbum(SpotifyAlbumMatch album) async {
+    final ok = await _guard(
+      () => _api.playContext(album.uri, deviceId: _targetDeviceId),
+    );
+    if (!ok) return;
+    _tab = RailTab.queue;
+    showToast('${album.name} を再生します');
     await _afterCommand();
   }
 

@@ -2,11 +2,14 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 
+import '../models/release_models.dart';
 import '../models/spotify_models.dart';
+import '../state/new_releases_controller.dart';
 import '../state/player_controller.dart';
 import '../theme/tokens.dart';
 import 'widgets/atoms.dart';
 import 'widgets/marquee_text.dart';
+import 'widgets/new_releases_panel.dart';
 import 'widgets/orbiting_light.dart';
 import 'widgets/panels.dart';
 import 'widgets/swipe_skip.dart';
@@ -18,15 +21,19 @@ class PhoneLayout extends StatelessWidget {
   const PhoneLayout({
     super.key,
     required this.controller,
+    required this.newReleases,
     required this.onPlayNow,
     required this.onPlayPlaylist,
+    required this.onPlayRelease,
     required this.attribution,
     required this.topInset,
   });
 
   final PlayerController controller;
+  final NewReleasesController newReleases;
   final ValueChanged<Track> onPlayNow;
   final ValueChanged<PlaylistSummary> onPlayPlaylist;
+  final ValueChanged<NewRelease> onPlayRelease;
   final Widget attribution;
 
   /// ステータスバー + 停止バナーぶん、コンテンツを押し下げる。
@@ -68,8 +75,10 @@ class PhoneLayout extends StatelessWidget {
               height: sheetHeight,
               child: _Sheet(
                 controller: controller,
+                newReleases: newReleases,
                 onPlayNow: onPlayNow,
                 onPlayPlaylist: onPlayPlaylist,
+                onPlayRelease: onPlayRelease,
               ),
             ),
           ],
@@ -221,13 +230,17 @@ class _DevicePill extends StatelessWidget {
 class _Sheet extends StatelessWidget {
   const _Sheet({
     required this.controller,
+    required this.newReleases,
     required this.onPlayNow,
     required this.onPlayPlaylist,
+    required this.onPlayRelease,
   });
 
   final PlayerController controller;
+  final NewReleasesController newReleases;
   final ValueChanged<Track> onPlayNow;
   final ValueChanged<PlaylistSummary> onPlayPlaylist;
+  final ValueChanged<NewRelease> onPlayRelease;
 
   @override
   Widget build(BuildContext context) {
@@ -273,8 +286,10 @@ class _Sheet extends StatelessWidget {
                 child: controller.sheetOpen
                     ? _SheetBody(
                         controller: controller,
+                        newReleases: newReleases,
                         onPlayNow: onPlayNow,
                         onPlayPlaylist: onPlayPlaylist,
+                        onPlayRelease: onPlayRelease,
                       )
                     : _SheetPeek(controller: controller),
               ),
@@ -343,11 +358,15 @@ class _SheetPeek extends StatelessWidget {
 class _SheetBody extends StatelessWidget {
   const _SheetBody({
     required this.controller,
+    required this.newReleases,
     required this.onPlayNow,
     required this.onPlayPlaylist,
+    required this.onPlayRelease,
   });
 
   final PlayerController controller;
+  final NewReleasesController newReleases;
+  final ValueChanged<NewRelease> onPlayRelease;
   final ValueChanged<Track> onPlayNow;
   final ValueChanged<PlaylistSummary> onPlayPlaylist;
 
@@ -361,7 +380,11 @@ class _SheetBody extends StatelessWidget {
           child: RailTabs(
             selected: controller.tab,
             onSelect: controller.selectTab,
-            labels: const ['Up next', 'Add tracks', 'Lists'],
+            // 4 タブぶんの幅しかないので、スマホだけ短くする。
+            labels: const {
+              RailTab.search: 'Add',
+              RailTab.playlists: 'Lists',
+            },
           ),
         ),
         Expanded(
@@ -384,6 +407,11 @@ class _SheetBody extends StatelessWidget {
                 controller: controller,
                 compact: true,
                 onPlay: onPlayPlaylist,
+              ),
+              RailTab.newReleases => NewReleasesPanel(
+                controller: newReleases,
+                compact: true,
+                onPlay: onPlayRelease,
               ),
             },
           ),

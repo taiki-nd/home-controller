@@ -290,6 +290,87 @@ class _PlaylistConfirmState extends State<PlaylistConfirm> {
   }
 }
 
+/// 新譜の行を押したあとの確認（設計メモ §14）。
+///
+/// アルバムを context として流すので、[PlaylistConfirm] と同じくキューは消える。
+/// MusicBrainz の行を Spotify のアルバムに**文字列検索で当てている**ため、
+/// 別物を掴んでいることがある。引き当てた側の名前を必ず見せて判断させる。
+class ReleasePlayConfirm extends StatelessWidget {
+  const ReleasePlayConfirm({
+    super.key,
+    required this.album,
+    required this.queueCount,
+    required this.onConfirm,
+    required this.onCancel,
+  });
+
+  final SpotifyAlbumMatch album;
+  final int queueCount;
+  final VoidCallback onConfirm;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    return _Scrim(
+      onTapOutside: onCancel,
+      child: _DialogCard(
+        maxWidth: 460,
+        children: [
+          CapsLabel('Spotify で見つかりました', size: 11, color: AppColors.green),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Artwork(url: album.artworkUrl, size: 64, radius: AppRadius.thumb),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      album.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppText.body(
+                        20,
+                        weight: FontWeight.w900,
+                        height: 1.25,
+                        letterSpacing: -0.4,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${album.artists} · ${album.totalTracks} 曲',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppText.body(13, color: AppColors.white(0.55)),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'このアルバムを base にして再生します。'
+            '現在のキュー（$queueCount 曲）は破棄されます。',
+            style: AppText.body(15, color: AppColors.white(0.62), height: 1.8),
+          ),
+          const SizedBox(height: 20),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              WhiteButton(label: 'このアルバムを再生', onPressed: onConfirm),
+              OutlineButton(label: 'キャンセル', onPressed: onCancel),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Connect デバイス一覧。
 class DevicePopover extends StatelessWidget {
   const DevicePopover({
@@ -509,6 +590,80 @@ class ErrorBanner extends StatelessWidget {
                 ),
               ),
             ),
+            IconButton(
+              onPressed: onDismiss,
+              icon: Icon(Icons.close, color: AppColors.white(0.7), size: 18),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// scope を足したあと、まだ再連携していない既存ユーザーへの告知。
+///
+/// エラーではない（今まで通りの操作は全部できる）ので danger にはしない。
+/// 新譜の取得だけができない状態なので、blocking にもしない。
+class ReauthBanner extends StatelessWidget {
+  const ReauthBanner({
+    super.key,
+    required this.onReauthorize,
+    required this.onDismiss,
+    required this.busy,
+  });
+
+  final VoidCallback onReauthorize;
+  final VoidCallback onDismiss;
+  final bool busy;
+
+  @override
+  Widget build(BuildContext context) {
+    // ステータスバーぶんは呼ぶ側（controller_screen）が y に足して置く。
+    return Material(
+      color: AppColors.green.withValues(alpha: 0.14),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 10, 8, 10),
+        child: Row(
+          children: [
+            const Icon(
+              Icons.new_releases_outlined,
+              color: AppColors.green,
+              size: 18,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                '新譜を取得するには Spotify との再連携が必要です',
+                style: AppText.body(
+                  14,
+                  weight: FontWeight.w700,
+                  color: AppColors.white(0.9),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            if (busy)
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16),
+                child: SizedBox.square(
+                  dimension: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: AppColors.green,
+                  ),
+                ),
+              )
+            else
+              GreenButton(
+                label: '再連携',
+                onPressed: onReauthorize,
+                fontSize: 13,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10,
+                ),
+              ),
             IconButton(
               onPressed: onDismiss,
               icon: Icon(Icons.close, color: AppColors.white(0.7), size: 18),

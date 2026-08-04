@@ -214,18 +214,31 @@ class _PlayButton extends StatelessWidget {
   }
 }
 
-/// 右レール / ボトムシート上部の 3 タブ。
+/// 右レール / ボトムシート上部のタブ。
+///
+/// ラベルは index ではなく [RailTab] で引く。[RailTab] に値を足したら
+/// [defaultLabel] の switch がコンパイルエラーになるので、付け忘れができない。
+/// 幅の狭いスマホだけ [labels] で短い文言に差し替える。
 class RailTabs extends StatelessWidget {
   const RailTabs({
     super.key,
     required this.selected,
     required this.onSelect,
-    this.labels = const ['Up next', 'Add tracks', 'Playlists'],
+    this.labels,
   });
 
   final RailTab selected;
   final ValueChanged<RailTab> onSelect;
-  final List<String> labels;
+
+  /// 差し替えたいものだけ入れる。無いものは [defaultLabel]。
+  final Map<RailTab, String>? labels;
+
+  static String defaultLabel(RailTab tab) => switch (tab) {
+    RailTab.queue => 'Up next',
+    RailTab.search => 'Add tracks',
+    RailTab.playlists => 'Playlists',
+    RailTab.newReleases => 'New',
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -235,7 +248,7 @@ class RailTabs extends StatelessWidget {
           if (index > 0) const SizedBox(width: 6),
           Expanded(
             child: _TabButton(
-              label: labels[index],
+              label: labels?[tab] ?? defaultLabel(tab),
               active: selected == tab,
               onTap: () => onSelect(tab),
             ),
