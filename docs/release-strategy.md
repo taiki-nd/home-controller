@@ -12,10 +12,10 @@ home-ctl を一般公開するにあたっての、ブランチ・タグ・機�
 
 | # | やること | 場所 | 済 |
 |---|---|---|---|
-| 1 | `ENABLE_MUSIC` フラグを実装（§3） | `app/lib/` | |
-| 2 | CI にタグ prefix → フラグの分岐を足す（§4） | `.github/workflows/ios-testflight.yml` | |
-| 3 | `makefile` に `ENABLE_MUSIC ?= true` を足す（§4） | `makefile` | |
-| 4 | `SPOTIFY_CLIENT_ID` 必須チェックを条件付きにする（§4） | 同 workflow | |
+| 1 | ~~`ENABLE_MUSIC` フラグを実装（§3）~~ | `app/lib/services/app_flags.dart` | ✅ |
+| 2 | ~~CI にタグ prefix → フラグの分岐を足す（§4）~~ | `.github/workflows/ios-testflight.yml` | ✅ |
+| 3 | ~~`makefile` に `ENABLE_MUSIC ?= true` を足す（§4）~~ | `makefile` | ✅ |
+| 4 | ~~`SPOTIFY_CLIENT_ID` 必須チェックを条件付きにする（§4）~~ | 同 workflow | ✅ |
 | 5 | v1.0.0 の中身を Milestone + Issue に起こす（§2） | GitHub | |
 | 6 | Spotify の extended quota を申請（§5） | Spotify Developer Dashboard | |
 

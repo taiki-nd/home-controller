@@ -20,11 +20,13 @@ home-ctl から Matter デバイスを操作するための構成検討と、Hom
 | 5 | Thread を使うなら border router を用意（§5） | — | |
 | 6 | デバイスを commissioning（§6） | iPhone の HA コンパニオンアプリ | |
 | 7 | 長期アクセストークンを発行して secure storage に入れる（§7） | HA プロフィール画面 | |
-| 8 | Flutter 側に HA クライアントを実装（§8） | `app/lib/services/` | |
+| 8 | ~~Flutter 側に HA クライアントを実装（§8）~~ | `app/lib/services/home_assistant_api.dart` | ✅ |
 | 9 | 外出先アクセスの方式を決める（§9） | — | |
-| 10 | `AppShell`（Drawer + IndexedStack）を作り、既存レイアウトを `ui/music/` に移設（§10） | `app/lib/ui/` | |
-| 11 | home 画面とタイルを実装（§10・§11） | `app/lib/ui/home/` | |
-| 12 | 無操作 2〜3 分で music に自動復帰を入れる（§10・**焼きつき対策の本命**） | `AppShell` | |
+| 10 | ~~`AppShell`（Drawer + IndexedStack）を作る（§10）~~ | `app/lib/ui/app_shell.dart` | ✅ |
+| 11 | ~~home 画面とタイルを実装（§10・§11）~~ | `app/lib/ui/home/` | ✅ |
+| 12 | ~~無操作 3 分で music に自動復帰（§10・**焼きつき対策の本命**）~~ | `AppShell.idleTimeout` | ✅ |
+| 13 | 実機で HA に繋いで動作確認（**まだ一度も本物の HA に繋いでいない**） | iPad | |
+| 14 | 既存の `tablet_layout` / `phone_layout` を `ui/music/` へ移設（§10） | `app/lib/ui/` | |
 
 ---
 
@@ -196,10 +198,15 @@ Client ID と違い**これは本物の secret**（HA の全権限を持つ）�
 ### シェルの構成
 
 ```
-lib/ui/app_shell.dart      ← 新規。Drawer + IndexedStack
-lib/ui/music/…             ← 既存の tablet_layout / phone_layout を移設
-lib/ui/home/…              ← 新規
+lib/ui/app_shell.dart      ← Drawer + IndexedStack
+lib/ui/music/music_view.dart ← music 側の入口（サインイン状態で出し分けるだけ）
+lib/ui/home/…              ← home 画面・タイル・接続設定
+lib/state/music_section.dart ← music の Controller 一式（元は main.dart が直接持っていた）
 ```
+
+> `tablet_layout.dart` / `phone_layout.dart` / `controller_screen.dart` は
+> **まだ `lib/ui/` 直下のまま。** 移設はインポートの張り替えだけで差分が大きく、
+> 機能に効かないので後回しにしている（§0 の 14）。
 
 **`Navigator.push` ではなく `IndexedStack` で、両方のサブツリーを生かしたまま
 切り替える。** 作り直すと、music に戻るたびに `PlayerController` が再生成されて
