@@ -34,6 +34,13 @@ class AppColors {
   /// 非アクティブなデバイスドット。
   static const dotIdle = Color(0xFF666666);
 
+  /// home 側。ON を色ではなく「面が光る」で表す（照明のメタファーと一致する）。
+  /// グリーンは Spotify のプライマリアクション専用なので、こちらには使わない。
+  static const homeGlow = Color(0xFFFFC98A);
+
+  /// 点いている部屋を示す点。
+  static const homeDot = Color(0xFFFFB74D);
+
   static Color white(double opacity) => Colors.white.withValues(alpha: opacity);
 }
 
