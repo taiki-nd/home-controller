@@ -74,18 +74,22 @@ class _HaSetupScreenState extends State<HaSetupScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 20, 0),
+              padding: const EdgeInsets.fromLTRB(4, 8, 20, 0),
               child: Row(
                 children: [
-                  IconButton(
-                    onPressed: widget.onOpenMenu,
-                    tooltip: widget.isRoot ? 'メニュー' : '戻る',
-                    icon: Icon(
-                      widget.isRoot ? Icons.menu : Icons.arrow_back,
-                      color: AppColors.white(0.6),
-                      size: 22,
+                  if (widget.isRoot)
+                    MenuButton(onPressed: widget.onOpenMenu)
+                  else
+                    IconButton(
+                      onPressed: widget.onOpenMenu,
+                      tooltip: '戻る',
+                      icon: Icon(
+                        Icons.arrow_back,
+                        color: AppColors.white(0.5),
+                        size: 22,
+                      ),
                     ),
-                  ),
+                  const SizedBox(width: 2),
                   const CapsLabel('HOME'),
                 ],
               ),

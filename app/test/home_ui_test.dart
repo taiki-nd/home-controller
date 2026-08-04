@@ -10,6 +10,7 @@ import 'package:spotify_remote/ui/app_shell.dart';
 import 'package:spotify_remote/ui/home/ha_setup_screen.dart';
 import 'package:spotify_remote/ui/home/home_screen.dart';
 import 'package:spotify_remote/ui/home/widgets/home_tiles.dart';
+import 'package:spotify_remote/ui/widgets/atoms.dart';
 import 'package:spotify_remote/ui/music/music_view.dart';
 
 import 'ha_support.dart';
@@ -197,14 +198,15 @@ void main() {
           tester.widget<IndexedStack>(find.byType(IndexedStack)).index;
       expect(index(), 0, reason: '起動時は必ず music（前回のモードを復元しない）');
 
-      // music 側にも ☰ がある（帰属表示のピルの行に同居させている）。
-      expect(
-        find.descendant(
-          of: find.byType(MusicView),
-          matching: find.byTooltip('メニュー'),
-        ),
-        findsOneWidget,
+      // music 側にも ☰ があり、左上に出る。
+      final menu = find.descendant(
+        of: find.byType(MusicView),
+        matching: find.byType(MenuButton),
       );
+      expect(menu, findsOneWidget);
+      final at = tester.getTopLeft(menu);
+      expect(at.dx, lessThan(24));
+      expect(at.dy, lessThan(MediaQuery.paddingOf(tester.element(menu)).top + 40));
 
       // Drawer から home へ。IndexedStack は隠れている側の ☰ も木に持つので、
       // タップではなく Scaffold から開く。

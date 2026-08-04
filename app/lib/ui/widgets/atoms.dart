@@ -370,6 +370,32 @@ class Artwork extends StatelessWidget {
   }
 }
 
+/// home / music を切り替える Drawer を開く ☰。
+///
+/// **画面の左上に固定で置く。** 常時表示になるので焼きつきの種ではあるが、
+/// home は無操作 3 分で music に戻る（[AppShell.idleTimeout]）ので、同じ絵が
+/// 何時間も残り続けることはない。輝度を落として面の差を小さくしてある。
+class MenuButton extends StatelessWidget {
+  const MenuButton({super.key, required this.onPressed, this.compact = false});
+
+  final VoidCallback onPressed;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      onPressed: onPressed,
+      tooltip: 'メニュー',
+      visualDensity: compact ? VisualDensity.compact : VisualDensity.standard,
+      icon: Icon(
+        Icons.menu,
+        size: compact ? 20 : 22,
+        color: AppColors.white(0.5),
+      ),
+    );
+  }
+}
+
 /// `.18em` トラッキングの大文字ラベル。
 class CapsLabel extends StatelessWidget {
   const CapsLabel(this.text, {super.key, this.size = 11, this.color});

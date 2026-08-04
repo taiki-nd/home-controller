@@ -180,14 +180,11 @@ class _RailHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 10, 20, 6),
+      padding: const EdgeInsets.fromLTRB(4, 10, 20, 6),
       child: Row(
         children: [
-          IconButton(
-            onPressed: onOpenMenu,
-            tooltip: 'メニュー',
-            icon: Icon(Icons.menu, color: AppColors.white(0.6), size: 22),
-          ),
+          MenuButton(onPressed: onOpenMenu),
+          const SizedBox(width: 2),
           const CapsLabel('HOME'),
         ],
       ),

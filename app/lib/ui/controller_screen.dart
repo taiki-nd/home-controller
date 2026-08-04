@@ -36,9 +36,6 @@ class ControllerScreen extends StatefulWidget {
   final VoidCallback? onReauthorize;
 
   /// home へ切り替える Drawer を開く。null なら出さない（music 単体で使うとき）。
-  ///
-  /// **単独の常時アイコンを増やさない。** 帰属表示のピルと同じ行に同居させて、
-  /// 焼きつく面を増やさないようにする（`docs/…` §10）。
   final VoidCallback? onOpenMenu;
 
   @override
@@ -173,6 +170,13 @@ class _ControllerScreenState extends State<ControllerScreen>
                             ),
                     ),
 
+                    if (widget.onOpenMenu != null)
+                      Positioned(
+                        top: contentTop,
+                        left: 4,
+                        child: MenuButton(onPressed: widget.onOpenMenu!),
+                      ),
+
                     if (controller.showStoppedBanner)
                       Positioned(
                         top: 0,
@@ -296,31 +300,11 @@ class _ControllerScreenState extends State<ControllerScreen>
     );
   }
 
-  /// 帰属表示のピル。home がある構成では、その左に ☰ を並べる。
   Widget _attributionSlot(PlayerController controller, {bool compact = false}) {
-    final attribution = _Attribution(
+    return _Attribution(
       controller: controller,
       onLongPress: _confirmSignOut,
       compact: compact,
-    );
-    final onOpenMenu = widget.onOpenMenu;
-    if (onOpenMenu == null) return attribution;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        IconButton(
-          onPressed: onOpenMenu,
-          tooltip: 'メニュー',
-          visualDensity: VisualDensity.compact,
-          icon: Icon(
-            Icons.menu,
-            size: compact ? 18 : 20,
-            color: AppColors.white(0.55),
-          ),
-        ),
-        SizedBox(width: compact ? 2 : 6),
-        attribution,
-      ],
     );
   }
 

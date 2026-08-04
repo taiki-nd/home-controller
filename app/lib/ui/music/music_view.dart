@@ -4,6 +4,7 @@ import '../../state/music_section.dart';
 import '../../theme/tokens.dart';
 import '../controller_screen.dart';
 import '../login_screen.dart';
+import '../widgets/atoms.dart';
 
 /// music モードの入口。サインイン状態で出し分けるだけ。
 ///
@@ -42,19 +43,13 @@ class MusicView extends StatelessWidget {
           final login = LoginScreen(auth: section.auth);
           final onOpenMenu = this.onOpenMenu;
           if (onOpenMenu == null) return login;
-          // サインインしていないと帰属表示のピルごと出ないので、ここだけは
-          // ☰ を単独で置く。home へ渡る道が無くなるほうが困る。
           return Stack(
             children: [
               Positioned.fill(child: login),
               Positioned(
                 top: MediaQuery.paddingOf(context).top + 4,
                 left: 4,
-                child: IconButton(
-                  onPressed: onOpenMenu,
-                  tooltip: 'メニュー',
-                  icon: Icon(Icons.menu, color: AppColors.white(0.55)),
-                ),
+                child: MenuButton(onPressed: onOpenMenu),
               ),
             ],
           );
