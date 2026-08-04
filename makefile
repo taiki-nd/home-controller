@@ -6,7 +6,15 @@
 # SPOTIFY_CLIENT_ID は secret ではないがリポジトリには置かない。
 # 環境変数か `make app-run SPOTIFY_CLIENT_ID=xxxx` で渡す。
 SPOTIFY_CLIENT_ID ?=
-DART_DEFINES = --dart-define=SPOTIFY_CLIENT_ID=$(SPOTIFY_CLIENT_ID)
+
+# music (Spotify) 側を出すか。docs/release-strategy.md §3。
+#   手元・ios-test-v* → true / ios-v*(App Store 公開) → false
+# 既定を true にしているのは、手元の make app-run を今までどおり動かすため。
+# **実行時トグルにはしない**（審査後に機能を有効化する形はガイドライン 2.3.1）。
+ENABLE_MUSIC ?= true
+
+DART_DEFINES = --dart-define=SPOTIFY_CLIENT_ID=$(SPOTIFY_CLIENT_ID) \
+               --dart-define=ENABLE_MUSIC=$(ENABLE_MUSIC)
 
 BUNDLE_ID     = app.home-ctl
 PROFILE_NAME  = home-ctl App Store

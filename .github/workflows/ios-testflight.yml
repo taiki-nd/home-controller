@@ -162,17 +162,37 @@ jobs:
             echo "::notice::タグ以外の起動 → pubspec.yaml の version: を使用"
           fi
 
+      # タグの系統で music(Spotify)側を出すかを決める（docs/release-strategy.md §4）。
+      #   ios-test-v* → 自分・内輪用。Spotify 入り。TestFlight の Internal Testing
+      #                 は App Review 不要で、development mode の 25 ユーザー枠に収まる
+      #   ios-v*      → App Store 公開用。home 単体。これを審査に出す
+      # **実行時トグルにはしない。** コンパイル時に落とすので、公開バイナリからは
+      # Spotify のコードパスに到達できない（ガイドライン 2.3.1 の隠し機能を避ける）。
+      - name: Resolve feature flags
+        id: flags
+        run: |
+          if [[ "${GITHUB_REF_NAME}" == ios-test-v* ]]; then
+            echo "enable_music=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::music あり (内輪配布)"
+          else
+            echo "enable_music=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::music なし (公開ビルド)"
+          fi
+
       # ── ビルド準備（pods + Generated.xcconfig + dart-defines）─────────────
       # Client ID はここで埋め込む。PKCE なので client secret は存在しない。
       - name: Prepare Flutter iOS build config
         run: |
-          if [ -z "${{ secrets.SPOTIFY_CLIENT_ID }}" ]; then
+          # music を出さないビルドでは Spotify を一切叩かないので Client ID も要らない。
+          if [ "${{ steps.flags.outputs.enable_music }}" = "true" ] \
+            && [ -z "${{ secrets.SPOTIFY_CLIENT_ID }}" ]; then
             echo "::error::SPOTIFY_CLIENT_ID secret が未設定です。ログインできないビルドになるため中断します。"
             exit 1
           fi
           flutter precache --ios
           flutter build ios --release --config-only ${{ steps.vername.outputs.flag }} \
             --build-number=${{ steps.ver.outputs.build_number }} \
+            --dart-define=ENABLE_MUSIC=${{ steps.flags.outputs.enable_music }} \
             --dart-define=SPOTIFY_CLIENT_ID=${{ secrets.SPOTIFY_CLIENT_ID }}
 
       - name: pod install
