@@ -198,15 +198,14 @@ void main() {
           tester.widget<IndexedStack>(find.byType(IndexedStack)).index;
       expect(index(), 0, reason: '起動時は必ず music（前回のモードを復元しない）');
 
-      // music 側にも ☰ があり、左上に出る。
-      final menu = find.descendant(
-        of: find.byType(MusicView),
-        matching: find.byType(MenuButton),
+      // music 側にも ☰ がある（サインイン前はログイン画面の左上）。
+      expect(
+        find.descendant(
+          of: find.byType(MusicView),
+          matching: find.byType(MenuButton),
+        ),
+        findsOneWidget,
       );
-      expect(menu, findsOneWidget);
-      final at = tester.getTopLeft(menu);
-      expect(at.dx, lessThan(24));
-      expect(at.dy, lessThan(MediaQuery.paddingOf(tester.element(menu)).top + 40));
 
       // Drawer から home へ。IndexedStack は隠れている側の ☰ も木に持つので、
       // タップではなく Scaffold から開く。

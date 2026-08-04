@@ -173,6 +173,51 @@ void main() {
     expect(find.text('3 TRACKS AHEAD'), findsOneWidget);
   });
 
+  testWidgets('☰ はデバイスピルの左に、行を増やさずに入る', (tester) async {
+    tester.view.physicalSize = ipad;
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final controller = await buildController(tester, playing: true);
+    await tester.pumpWidget(
+      wrap(
+        TabletLayout(
+          controller: controller,
+          newReleases: _idleReleases(),
+          onPlayNow: (_) {},
+          onPlayPlaylist: (_) {},
+          onPlayRelease: (_) {},
+          attribution: const SizedBox.shrink(),
+          menu: MenuButton(onPressed: () {}),
+          topInset: 0,
+        ),
+        ipad,
+      ),
+    );
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+
+    final menu = find.byType(MenuButton);
+    final pillDot = find.byType(StatusDot).first;
+
+    // 同じ行にいる（縦位置が揃っている）。
+    expect(
+      tester.getCenter(menu).dy,
+      moreOrLessEquals(tester.getCenter(pillDot).dy, epsilon: 1),
+    );
+
+    // ピルはそのぶん右へずれる。ここが devicePillDotXFor と食い違うと、
+    // デバイス一覧のポップオーバーの点が縦に揃わなくなる。
+    expect(
+      tester.getTopLeft(pillDot).dx,
+      moreOrLessEquals(
+        TabletLayout.devicePillDotXFor(hasMenu: true),
+        epsilon: 0.5,
+      ),
+    );
+  });
+
   testWidgets('iPhone レイアウトが実寸で破綻せず描画される', (tester) async {
     tester.view.physicalSize = iphone;
     tester.view.devicePixelRatio = 1;

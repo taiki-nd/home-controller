@@ -381,16 +381,36 @@ class MenuButton extends StatelessWidget {
   final VoidCallback onPressed;
   final bool compact;
 
+  /// 幅を固定する。デバイスピルの左に置くので、ここが伸び縮みすると
+  /// ピルの点の x が動き、デバイス一覧のポップオーバーと縦に揃わなくなる。
+  static const slotWidth = kMinTapTarget;
+
+  /// ピルとの間隔。[slotWidth] と合わせて、ピルが右へずれる量になる。
+  static const gap = 8.0;
+
+  /// [slotWidth] + [gap]。ピルの点の x を出すときに足す。
+  static const shift = slotWidth + gap;
+
   @override
   Widget build(BuildContext context) {
-    return IconButton(
-      onPressed: onPressed,
-      tooltip: 'メニュー',
-      visualDensity: compact ? VisualDensity.compact : VisualDensity.standard,
-      icon: Icon(
-        Icons.menu,
-        size: compact ? 20 : 22,
-        color: AppColors.white(0.5),
+    // IconButton は visualDensity ぶん自分で膨らむので、外から幅を締める。
+    // ここが 1px でもずれるとポップオーバーの点が縦に揃わない。
+    return SizedBox(
+      width: slotWidth,
+      height: slotWidth,
+      child: IconButton(
+        onPressed: onPressed,
+        tooltip: 'メニュー',
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints.tightFor(
+          width: slotWidth,
+          height: slotWidth,
+        ),
+        icon: Icon(
+          Icons.menu,
+          size: compact ? 20 : 22,
+          color: AppColors.white(0.5),
+        ),
       ),
     );
   }

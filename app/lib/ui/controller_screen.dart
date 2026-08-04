@@ -93,8 +93,11 @@ class _ControllerScreenState extends State<ControllerScreen>
 
         // デバイス一覧の緑の点は、開く前に見えているピルの点の真下に来ないと
         // 横にずれて見える。ピル側の x から逆算して置く。
+        final hasMenu = widget.onOpenMenu != null;
         final popoverLeft = DevicePopover.leftForPillDotX(
-          wide ? TabletLayout.devicePillDotX : PhoneLayout.devicePillDotX,
+          wide
+              ? TabletLayout.devicePillDotXFor(hasMenu: hasMenu)
+              : PhoneLayout.devicePillDotXFor(hasMenu: hasMenu),
         );
 
         // 停止中は配色を落として「鳴っていない」ことを画面全体で示す。
@@ -155,6 +158,7 @@ class _ControllerScreenState extends State<ControllerScreen>
                               onPlayRelease: _askRelease,
                               topInset: contentTop,
                               attribution: _attributionSlot(controller),
+                              menu: _menuButton(),
                             )
                           : PhoneLayout(
                               controller: controller,
@@ -167,15 +171,9 @@ class _ControllerScreenState extends State<ControllerScreen>
                                 controller,
                                 compact: true,
                               ),
+                              menu: _menuButton(compact: true),
                             ),
                     ),
-
-                    if (widget.onOpenMenu != null)
-                      Positioned(
-                        top: contentTop,
-                        left: 4,
-                        child: MenuButton(onPressed: widget.onOpenMenu!),
-                      ),
 
                     if (controller.showStoppedBanner)
                       Positioned(
@@ -298,6 +296,13 @@ class _ControllerScreenState extends State<ControllerScreen>
         );
       },
     );
+  }
+
+  /// デバイスピルの左に並べる ☰。行は増やさない。
+  Widget? _menuButton({bool compact = false}) {
+    final onOpenMenu = widget.onOpenMenu;
+    if (onOpenMenu == null) return null;
+    return MenuButton(onPressed: onOpenMenu, compact: compact);
   }
 
   Widget _attributionSlot(PlayerController controller, {bool compact = false}) {

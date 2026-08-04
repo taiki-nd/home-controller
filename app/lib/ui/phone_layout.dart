@@ -27,6 +27,7 @@ class PhoneLayout extends StatelessWidget {
     required this.onPlayRelease,
     required this.attribution,
     required this.topInset,
+    this.menu,
   });
 
   final PlayerController controller;
@@ -36,6 +37,9 @@ class PhoneLayout extends StatelessWidget {
   final ValueChanged<NewRelease> onPlayRelease;
   final Widget attribution;
 
+  /// デバイスピルの左に置く ☰。行は増やさない。null なら出さない。
+  final Widget? menu;
+
   /// ステータスバー + 停止バナーぶん、コンテンツを押し下げる。
   /// 呼ぶ側が SafeArea を掛けないので、上の余白はここで確保する。
   final double topInset;
@@ -43,6 +47,10 @@ class PhoneLayout extends StatelessWidget {
   /// デバイスピルの点の x（左余白 24 + ピルの左パディング 14）。
   /// ポップオーバーの点をこの列に載せるので、余白を触ったらここも直す。
   static const devicePillDotX = 38.0;
+
+  /// ☰ を出すとピルがそのぶん右へずれる。
+  static double devicePillDotXFor({required bool hasMenu}) =>
+      hasMenu ? devicePillDotX + MenuButton.shift : devicePillDotX;
 
   static const _sheetClosedHeight = 116.0;
 
@@ -63,6 +71,7 @@ class PhoneLayout extends StatelessWidget {
               child: _NowPlaying(
                 controller: controller,
                 attribution: attribution,
+                menu: menu,
                 topInset: topInset,
               ),
             ),
@@ -93,10 +102,12 @@ class _NowPlaying extends StatelessWidget {
     required this.controller,
     required this.attribution,
     required this.topInset,
+    required this.menu,
   });
 
   final PlayerController controller;
   final Widget attribution;
+  final Widget? menu;
   final double topInset;
 
   @override
@@ -119,6 +130,10 @@ class _NowPlaying extends StatelessWidget {
             children: [
               Row(
                 children: [
+                  if (menu != null) ...[
+                    menu!,
+                    const SizedBox(width: MenuButton.gap),
+                  ],
                   Flexible(child: _DevicePill(controller: controller)),
                   const Spacer(),
                   attribution,
