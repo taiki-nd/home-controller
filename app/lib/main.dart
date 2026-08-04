@@ -1,118 +1,49 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'services/auth_service.dart';
-import 'services/musicbrainz_api.dart';
-import 'services/spotify_api.dart';
-import 'state/new_releases_controller.dart';
-import 'state/player_controller.dart';
+import 'services/app_flags.dart';
+import 'state/home_controller.dart';
+import 'state/music_section.dart';
 import 'theme/tokens.dart';
-import 'ui/controller_screen.dart';
-import 'ui/login_screen.dart';
+import 'ui/app_shell.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // 常に暗い画面なのでステータスバーは明色固定。
   SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle.light);
-  runApp(const SpotifyRemoteApp());
+  runApp(const HomeCtlApp());
 }
 
-class SpotifyRemoteApp extends StatefulWidget {
-  const SpotifyRemoteApp({super.key});
+/// home（Home Assistant）と music（Spotify）を束ねる。
+///
+/// music は [AppFlags.enableMusic] が false のビルドでは**そもそも作らない。**
+/// 実行時に隠すのではなくコンパイル時に落とすので、公開バイナリからは
+/// Spotify のコードパスに到達できない（`docs/release-strategy.md` §3）。
+class HomeCtlApp extends StatefulWidget {
+  const HomeCtlApp({super.key});
 
   @override
-  State<SpotifyRemoteApp> createState() => _SpotifyRemoteAppState();
+  State<HomeCtlApp> createState() => _HomeCtlAppState();
 }
 
-class _SpotifyRemoteAppState extends State<SpotifyRemoteApp> {
-  late final AuthService _auth = AuthService();
-  late final SpotifyApi _api = SpotifyApi(_auth);
-  late final MusicBrainzApi _musicBrainz = MusicBrainzApi();
-  late final ReleaseResolver _resolver = ReleaseResolver(_api);
-
-  /// サインインするたびに作り直す。前のポーリングを確実に止めるため。
-  PlayerController? _player;
-
-  /// 新譜（設計メモ §14）。ポーリングも寿命も [PlayerController] と別物なので
-  /// 混ぜず、サインイン状態にだけ追従させる。
-  NewReleasesController? _newReleases;
-
-  @override
-  void initState() {
-    super.initState();
-    _auth.addListener(_syncPlayer);
-    _auth.restore();
-  }
+class _HomeCtlAppState extends State<HomeCtlApp> {
+  final HomeController _home = HomeController();
+  final MusicSection? _music = AppFlags.enableMusic ? MusicSection() : null;
 
   @override
   void dispose() {
-    _auth.removeListener(_syncPlayer);
-    _player?.dispose();
-    _newReleases?.dispose();
-    _auth.dispose();
+    _home.dispose();
+    _music?.dispose();
     super.dispose();
-  }
-
-  void _syncPlayer() {
-    final signedIn = _auth.isSignedIn;
-    if (signedIn && _player == null) {
-      setState(() {
-        _player = PlayerController(_api);
-        _newReleases = NewReleasesController(_api, _musicBrainz);
-      });
-    } else if (!signedIn && _player != null) {
-      final oldPlayer = _player;
-      final oldReleases = _newReleases;
-      setState(() {
-        _player = null;
-        _newReleases = null;
-      });
-      oldPlayer?.dispose();
-      oldReleases?.dispose();
-    }
   }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Spotify Remote',
+      title: 'home-ctl',
       debugShowCheckedModeBanner: false,
       theme: buildAppTheme(),
-      home: ListenableBuilder(
-        listenable: _auth,
-        builder: (context, _) {
-          if (!_auth.isRestored) {
-            return const Scaffold(
-              backgroundColor: AppColors.bg,
-              body: Center(
-                child: SizedBox.square(
-                  dimension: 26,
-                  child: CircularProgressIndicator(
-                    color: AppColors.green,
-                    strokeWidth: 2.5,
-                  ),
-                ),
-              ),
-            );
-          }
-          final player = _player;
-          final newReleases = _newReleases;
-          if (player == null || newReleases == null) {
-            return LoginScreen(auth: _auth);
-          }
-          return ControllerScreen(
-            // サインアウト → 再サインインで状態を持ち越さない。
-            key: ValueKey(player),
-            controller: player,
-            newReleases: newReleases,
-            resolver: _resolver,
-            onSignOut: _auth.signOut,
-            needsReauthorization: _auth.needsReauthorization,
-            authBusy: _auth.isBusy,
-            onReauthorize: _auth.reauthorize,
-          );
-        },
-      ),
+      home: AppShell(home: _home, music: _music),
     );
   }
 }

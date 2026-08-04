@@ -22,6 +22,7 @@ class ControllerScreen extends StatefulWidget {
     this.needsReauthorization = false,
     this.authBusy = false,
     this.onReauthorize,
+    this.onOpenMenu,
   });
 
   final PlayerController controller;
@@ -33,6 +34,12 @@ class ControllerScreen extends StatefulWidget {
   final bool needsReauthorization;
   final bool authBusy;
   final VoidCallback? onReauthorize;
+
+  /// home へ切り替える Drawer を開く。null なら出さない（music 単体で使うとき）。
+  ///
+  /// **単独の常時アイコンを増やさない。** 帰属表示のピルと同じ行に同居させて、
+  /// 焼きつく面を増やさないようにする（`docs/…` §10）。
+  final VoidCallback? onOpenMenu;
 
   @override
   State<ControllerScreen> createState() => _ControllerScreenState();
@@ -150,10 +157,7 @@ class _ControllerScreenState extends State<ControllerScreen>
                               onPlayPlaylist: _askPlaylist,
                               onPlayRelease: _askRelease,
                               topInset: contentTop,
-                              attribution: _Attribution(
-                                controller: controller,
-                                onLongPress: _confirmSignOut,
-                              ),
+                              attribution: _attributionSlot(controller),
                             )
                           : PhoneLayout(
                               controller: controller,
@@ -162,9 +166,8 @@ class _ControllerScreenState extends State<ControllerScreen>
                               onPlayPlaylist: _askPlaylist,
                               onPlayRelease: _askRelease,
                               topInset: contentTop,
-                              attribution: _Attribution(
-                                controller: controller,
-                                onLongPress: _confirmSignOut,
+                              attribution: _attributionSlot(
+                                controller,
                                 compact: true,
                               ),
                             ),
@@ -290,6 +293,34 @@ class _ControllerScreenState extends State<ControllerScreen>
           ),
         );
       },
+    );
+  }
+
+  /// 帰属表示のピル。home がある構成では、その左に ☰ を並べる。
+  Widget _attributionSlot(PlayerController controller, {bool compact = false}) {
+    final attribution = _Attribution(
+      controller: controller,
+      onLongPress: _confirmSignOut,
+      compact: compact,
+    );
+    final onOpenMenu = widget.onOpenMenu;
+    if (onOpenMenu == null) return attribution;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          onPressed: onOpenMenu,
+          tooltip: 'メニュー',
+          visualDensity: VisualDensity.compact,
+          icon: Icon(
+            Icons.menu,
+            size: compact ? 18 : 20,
+            color: AppColors.white(0.55),
+          ),
+        ),
+        SizedBox(width: compact ? 2 : 6),
+        attribution,
+      ],
     );
   }
 
