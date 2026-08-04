@@ -3,28 +3,35 @@
 //   make app-mock                 Chrome で開く（上部バーで枠を切り替える）
 //   make app-mock DEVICE=iphone   iPhone サイズの枠で開く（ipad も可）
 //
-// Spotify にはつながない。AuthService / SpotifyApi をこのファイル内の偽物に
-// 差し替えているだけで、画面もポーリングも状態遷移も本番と同じコードが動く。
+// Spotify にも Home Assistant にもつながない。AuthService / SpotifyApi と
+// HA の WebSocket の口をこのファイル内の偽物に差し替えているだけで、画面も
+// ポーリングも状態遷移も本番と同じコードが動く。
 // 再生位置は時計で進み、再生/停止・曲送り・キュー追加・検索・デバイス切り替えは
 // すべて手元の状態を書き換えて返すので、触った結果がそのまま画面に出る。
+//
+// home 側は ☰ から。照明・エアコン・シーンは押すと 320ms 後に state_changed が
+// 返るので、**楽観更新が効いている（押した瞬間に光る）のを目で確認できる。**
 //
 // アートワークは web/mock/*.png。同一オリジンなので CORS に引っかからず、
 // palette_generator の背景色抽出（PlayerController._updatePalette）も通る。
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
 import 'models/release_models.dart';
 import 'models/spotify_models.dart';
 import 'services/auth_service.dart';
+import 'services/ha_credentials.dart';
+import 'services/ha_socket.dart';
+import 'services/home_assistant_api.dart';
 import 'services/musicbrainz_api.dart';
 import 'services/spotify_api.dart';
-import 'state/new_releases_controller.dart';
-import 'state/player_controller.dart';
+import 'state/home_controller.dart';
+import 'state/music_section.dart';
 import 'theme/tokens.dart';
-import 'ui/controller_screen.dart';
-import 'ui/login_screen.dart';
+import 'ui/app_shell.dart';
 
 void main() {
   runApp(const MockApp());
@@ -58,10 +65,19 @@ class MockApp extends StatefulWidget {
 class _MockAppState extends State<MockApp> {
   late final _MockAuth _auth = _MockAuth();
   late final _MockApi _api = _MockApi(_auth);
-  late final _MockMusicBrainz _musicBrainz = _MockMusicBrainz();
-  late final NewReleasesController _newReleases = NewReleasesController(
-    _api,
-    _musicBrainz,
+
+  late final MusicSection _music = MusicSection(
+    auth: _auth,
+    api: _api,
+    musicBrainz: _MockMusicBrainz(),
+  );
+
+  /// HA にもつながない。WebSocket の口だけ偽物に差し替えるので、
+  /// 楽観更新も state_changed の反映も本番と同じコードが動く。
+  late final HomeController _home = HomeController(
+    credentials: _MockHaCredentials(),
+    open: (connection) =>
+        HaSession.connect(connection, opener: (_) async => _MockHaSocket()),
   );
 
   /// 起動時は ?device=iphone / ?device=ipad を見る。無ければウィンドウ追従。
@@ -70,34 +86,11 @@ class _MockAppState extends State<MockApp> {
     orElse: () => _Stage.fit,
   );
 
-  /// サインアウトするたびに作り直す（main.dart と同じ扱い）。
-  PlayerController? _player;
-
-  @override
-  void initState() {
-    super.initState();
-    _auth.addListener(_syncPlayer);
-    // 最初からサインイン済みで始める。initState では setState を呼べないので直接。
-    _player = PlayerController(_api);
-  }
-
   @override
   void dispose() {
-    _auth.removeListener(_syncPlayer);
-    _player?.dispose();
-    _auth.dispose();
+    _music.dispose();
+    _home.dispose();
     super.dispose();
-  }
-
-  void _syncPlayer() {
-    final signedIn = _auth.isSignedIn;
-    if (signedIn && _player == null) {
-      setState(() => _player = PlayerController(_api));
-    } else if (!signedIn && _player != null) {
-      final old = _player;
-      setState(() => _player = null);
-      old?.dispose();
-    }
   }
 
   @override
@@ -120,22 +113,8 @@ class _MockAppState extends State<MockApp> {
     );
   }
 
-  Widget _screen() {
-    return ListenableBuilder(
-      listenable: _auth,
-      builder: (context, _) {
-        final player = _player;
-        if (player == null) return LoginScreen(auth: _auth);
-        return ControllerScreen(
-          key: ValueKey(player),
-          controller: player,
-          newReleases: _newReleases,
-          resolver: ReleaseResolver(_api),
-          onSignOut: _auth.signOut,
-        );
-      },
-    );
-  }
+  /// 本番と同じ [AppShell]。☰ から home / music を行き来できる。
+  Widget _screen() => AppShell(home: _home, music: _music);
 
   /// 枠に入れる。MediaQuery も端末のサイズ/セーフエリアで上書きするので、
   /// ブレークポイント（kTabletBreakpoint）も SafeArea も実機と同じ判定になる。
@@ -673,5 +652,215 @@ class _MockMusicBrainz extends MusicBrainzApi {
       make('Frozen Charlotte', 'Jack White', -6, 4),
       make('A ? of WHEN', 'Panda Bear & Sonic Boom', -21, 1),
     ];
+  }
+}
+
+// ── 偽物の Home Assistant ────────────────────────────────────────────────
+
+/// 接続先が保存済みという顔をする。設定画面を飛ばして home を出すため。
+class _MockHaCredentials extends HaCredentials {
+  @override
+  Future<HaConnection?> load() async => HaConnection(
+    baseUrl: Uri.parse('http://mock.local:8123'),
+    token: 'mock',
+  );
+
+  @override
+  Future<void> save(HaConnection connection) async {}
+
+  @override
+  Future<void> clear() async {}
+}
+
+/// WebSocket の口だけの張りぼて。
+///
+/// **プロトコルは本物と同じ**（auth → get_states → subscribe_events →
+/// call_service）。call_service を受けたら手元の状態を書き換えて
+/// `state_changed` を返すので、押した結果がそのまま画面に出る。
+/// 少し遅らせて返すのは、楽観更新が効いているかを目で見られるようにするため。
+class _MockHaSocket implements HaSocket {
+  _MockHaSocket() {
+    _emit({'type': 'auth_required', 'ha_version': '2026.6.0'});
+  }
+
+  /// HA が返す往復の遅さの当たり。実際の LAN 内はもう少し速い。
+  static const _latency = Duration(milliseconds: 320);
+
+  final _out = StreamController<String>();
+
+  final Map<String, Map<String, Object?>> _states = {
+    'light.ceiling': _entity('天井', 'on', {
+      'brightness': 204,
+      'supported_color_modes': ['brightness', 'color_temp'],
+    }),
+    'light.indirect': _entity('間接照明', 'off', {
+      'brightness': 0,
+      'supported_color_modes': ['brightness'],
+    }),
+    'climate.living': _entity('エアコン', 'cool', {
+      'hvac_modes': ['off', 'cool', 'heat', 'dry', 'fan_only', 'heat_cool'],
+      'temperature': 26.0,
+      'current_temperature': 27.8,
+      'min_temp': 16.0,
+      'max_temp': 30.0,
+      'target_temp_step': 0.5,
+    }),
+    'switch.vent': _entity('換気', 'off', {}),
+    'scene.night': _entity('おやすみ', 'unknown', {}),
+    'sensor.living_temp': _entity('室温', '27.8', {
+      'device_class': 'temperature',
+      'unit_of_measurement': '°C',
+    }),
+    'sensor.living_humidity': _entity('湿度', '54', {
+      'device_class': 'humidity',
+      'unit_of_measurement': '%',
+    }),
+    'light.bed': _entity('ベッド', 'off', {
+      'supported_color_modes': ['brightness'],
+      'brightness': 0,
+    }),
+    'climate.bedroom': _entity('エアコン', 'off', {
+      'hvac_modes': ['off', 'cool', 'heat'],
+      'temperature': 27.0,
+      'current_temperature': 28.4,
+      'min_temp': 16.0,
+      'max_temp': 30.0,
+      'target_temp_step': 0.5,
+    }),
+    'sensor.bedroom_temp': _entity('室温', '28.4', {
+      'device_class': 'temperature',
+      'unit_of_measurement': '°C',
+    }),
+    'light.kitchen': _entity('手元灯', 'on', {
+      'supported_color_modes': ['onoff'],
+    }),
+    'switch.kettle': _entity('ケトル', 'off', {}),
+  };
+
+  static const _areas = {
+    'living': 'リビング',
+    'bedroom': '寝室',
+    'kitchen': 'キッチン',
+  };
+
+  static const _entityAreas = {
+    'light.ceiling': 'living',
+    'light.indirect': 'living',
+    'climate.living': 'living',
+    'switch.vent': 'living',
+    'scene.night': 'living',
+    'sensor.living_temp': 'living',
+    'sensor.living_humidity': 'living',
+    'light.bed': 'bedroom',
+    'climate.bedroom': 'bedroom',
+    'sensor.bedroom_temp': 'bedroom',
+    'light.kitchen': 'kitchen',
+    'switch.kettle': 'kitchen',
+  };
+
+  static Map<String, Object?> _entity(
+    String name,
+    String state,
+    Map<String, Object?> attributes,
+  ) => {
+    'state': state,
+    'attributes': {'friendly_name': name, ...attributes},
+  };
+
+  @override
+  Stream<String> get messages => _out.stream;
+
+  @override
+  Future<void> close() async {
+    if (!_out.isClosed) await _out.close();
+  }
+
+  @override
+  void send(String data) {
+    final frame = jsonDecode(data) as Map<String, dynamic>;
+    final id = frame['id'] as int?;
+    switch (frame['type']) {
+      case 'auth':
+        _emit({'type': 'auth_ok'});
+      case 'ping':
+        _emit({'id': id, 'type': 'pong'});
+      case 'get_states':
+        _result(id, [
+          for (final entry in _states.entries) _stateOf(entry.key),
+        ]);
+      case 'subscribe_events':
+        _result(id, null);
+      case 'config/area_registry/list':
+        _result(id, [
+          for (final area in _areas.entries)
+            {'area_id': area.key, 'name': area.value},
+        ]);
+      case 'config/device_registry/list':
+        _result(id, const []);
+      case 'config/entity_registry/list':
+        _result(id, [
+          for (final entry in _entityAreas.entries)
+            {'entity_id': entry.key, 'area_id': entry.value},
+        ]);
+      case 'call_service':
+        _result(id, null);
+        Timer(_latency, () => _apply(frame));
+    }
+  }
+
+  /// 実機と同じで、コマンドの成否とは別に `state_changed` が後から届く。
+  void _apply(Map<String, dynamic> frame) {
+    final entityId =
+        (frame['target'] as Map?)?['entity_id'] as String? ?? '';
+    final state = _states[entityId];
+    if (state == null) return;
+    final data = Map<String, Object?>.from(
+      frame['service_data'] as Map? ?? const {},
+    );
+    final attributes = Map<String, Object?>.from(
+      state['attributes']! as Map,
+    );
+
+    switch (frame['service']) {
+      case 'turn_on':
+        state['state'] = 'on';
+        final percent = data['brightness_pct'];
+        if (percent is num) {
+          attributes['brightness'] = (percent * 255 / 100).round();
+        } else if ((attributes['brightness'] as num? ?? 0) == 0) {
+          attributes['brightness'] = 255;
+        }
+      case 'turn_off':
+        state['state'] = 'off';
+        attributes['brightness'] = 0;
+      case 'set_hvac_mode':
+        state['state'] = data['hvac_mode'] as String? ?? 'off';
+      case 'set_temperature':
+        attributes['temperature'] = data['temperature'];
+    }
+    state['attributes'] = attributes;
+    _emit({
+      'type': 'event',
+      'event': {
+        'event_type': 'state_changed',
+        'data': {
+          'entity_id': entityId,
+          'new_state': _stateOf(entityId),
+        },
+      },
+    });
+  }
+
+  Map<String, Object?> _stateOf(String entityId) => {
+    'entity_id': entityId,
+    'state': _states[entityId]!['state'],
+    'attributes': _states[entityId]!['attributes'],
+  };
+
+  void _result(int? id, Object? result) =>
+      _emit({'id': id, 'type': 'result', 'success': true, 'result': result});
+
+  void _emit(Map<String, Object?> message) {
+    if (!_out.isClosed) _out.add(jsonEncode(message));
   }
 }

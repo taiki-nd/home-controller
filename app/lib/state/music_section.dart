@@ -13,13 +13,21 @@ import 'player_controller.dart';
 /// ので、モードを行き来してもここは作り直されない
 /// （`docs/home-assistant-integration.md` §10）。
 class MusicSection extends ChangeNotifier {
-  MusicSection() {
+  /// 差し替え口は `main_mock.dart`（デザイン確認用の偽 Spotify）のためにある。
+  MusicSection({AuthService? auth, SpotifyApi? api, MusicBrainzApi? musicBrainz})
+    : _auth = auth ?? AuthService(),
+      _injectedApi = api,
+      _injectedMusicBrainz = musicBrainz {
     _auth.addListener(_syncPlayer);
   }
 
-  final AuthService _auth = AuthService();
-  late final SpotifyApi _api = SpotifyApi(_auth);
-  late final MusicBrainzApi _musicBrainz = MusicBrainzApi();
+  final AuthService _auth;
+  final SpotifyApi? _injectedApi;
+  final MusicBrainzApi? _injectedMusicBrainz;
+
+  late final SpotifyApi _api = _injectedApi ?? SpotifyApi(_auth);
+  late final MusicBrainzApi _musicBrainz =
+      _injectedMusicBrainz ?? MusicBrainzApi();
   late final ReleaseResolver _resolver = ReleaseResolver(_api);
 
   /// サインインするたびに作り直す。前のポーリングを確実に止めるため。
@@ -46,7 +54,12 @@ class MusicSection extends ChangeNotifier {
     return track.name;
   }
 
-  Future<void> start() => _auth.restore();
+  Future<void> start() async {
+    await _auth.restore();
+    // 復元で状態が変わらなかった場合（最初からサインイン済みのモックなど）でも
+    // 通知は来ないので、ここで一度そろえる。
+    _syncPlayer();
+  }
 
   void _syncPlayer() {
     final signedIn = _auth.isSignedIn;

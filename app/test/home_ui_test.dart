@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:spotify_remote/main.dart';
+import 'package:spotify_remote/main_mock.dart';
 import 'package:spotify_remote/services/app_flags.dart';
 import 'package:spotify_remote/state/home_controller.dart';
 import 'package:spotify_remote/state/music_section.dart';
@@ -246,4 +247,43 @@ void main() {
       AppFlags.enableMusic ? findsOneWidget : findsNothing,
     );
   });
+
+  testWidgets('make app-mock: 偽の HA で home のタイルが並ぶ', (tester) async {
+    await setSurface(tester, _ipad);
+
+    await tester.pumpWidget(const MockApp());
+    await tester.pump(const Duration(milliseconds: 400));
+    drainImageErrors(tester);
+
+    tester.state<ScaffoldState>(find.byType(Scaffold).first).openDrawer();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(
+      find.descendant(of: find.byType(Drawer), matching: find.text('HOME')),
+    );
+    await tester.pump(const Duration(milliseconds: 400));
+    drainImageErrors(tester);
+
+    // 部屋は名前順なので、最初に開くのはキッチン。
+    expect(find.text('キッチン'), findsOneWidget);
+    expect(find.text('リビング'), findsOneWidget);
+    expect(find.text('手元灯'), findsOneWidget);
+
+    expect(find.widgetWithText(HomeTile, 'ケトル'), findsOneWidget);
+
+    // 押した結果が画面に出るかは HomeScreen 側のテストで見ている。ここは
+    // モックのエントリポイントが壊れていないことの確認に留める（枠を模す
+    // FittedBox / MediaQuery 差し替えの中では、テスト上の座標が実機とずれる）。
+
+    // アートワークが読めないと palette_generator が 15 秒のタイマーを残す。
+    // 実機では起きないが、ここで消化しておかないとテストが落ちる。
+    await tester.pump(const Duration(seconds: 16));
+    drainImageErrors(tester);
+  });
+}
+
+/// モックのアートワークは web/mock/*.png を HTTP で読む。テスト環境では必ず
+/// 400 になるので、home の確認には関係ないぶんを捨てる。
+void drainImageErrors(WidgetTester tester) {
+  while (tester.takeException() != null) {}
 }
