@@ -29,6 +29,9 @@ dependencies:
   palette_generator: ^0.3.3+7
   provider: ^6.1.2
   cupertino_icons: ^1.0.8
+  # Home Assistant の WebSocket API（/api/websocket）。状態はプッシュで届くので
+  # Spotify 側のようなポーリングは要らない。
+  web_socket_channel: ^3.0.1
 
 dev_dependencies:
   flutter_test:
