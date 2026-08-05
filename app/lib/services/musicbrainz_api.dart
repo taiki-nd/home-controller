@@ -61,6 +61,14 @@ class MusicBrainzApi {
   /// テストからは短くできるが、**本番でここを縮めてはいけない**（503 になる）。
   static const _defaultInterval = Duration(milliseconds: 1100);
 
+  /// 新譜として扱わない二次タイプ。**Remix はここに入れない**（新譜扱い）。
+  ///
+  /// 複数語のものは引用符で括る必要がある（`"Audio drama"` 等）。
+  static const _excludedSecondaryTypes =
+      'Compilation OR Live OR Soundtrack OR Interview OR Audiobook'
+      ' OR Spokenword OR "Audio drama" OR "DJ-mix" OR "Mixtape/Street"'
+      ' OR Demo OR "Field recording"';
+
   /// 検索の 1 ページ上限。
   static const _pageLimit = 100;
 
@@ -119,13 +127,16 @@ class MusicBrainzApi {
 
     for (var i = 0; i < artistMbids.length; i += _aridBatch) {
       final batch = artistMbids.skip(i).take(_aridBatch).toList();
-      // シングル・リミックス・再発を落とす。フォロー全員ぶんだと、これを
-      // 掛けないとアルバムがノイズに埋もれる（実測で 10件 → 3件）。
+      // シングルとリミックスは新譜として拾う。落とすのは「新しく出た曲では
+      // ないもの」だけ——ベスト盤・ライブ盤・サントラなど。
+      //
+      // **`-secondarytype:*` で二次タイプを一律に弾いてはいけない。**
+      // それだと Remix まで落ちる。除外は種類を並べて名指しする。
       final query =
           'arid:(${batch.join(' OR ')})'
           ' AND firstreleasedate:[${_day(from)} TO ${_day(to)}]'
-          ' AND primarytype:(Album OR EP)'
-          ' AND -secondarytype:*';
+          ' AND primarytype:(Album OR EP OR Single)'
+          ' AND -secondarytype:($_excludedSecondaryTypes)';
 
       for (var page = 0; page < _maxPages; page++) {
         final data = await _get('/release-group', {

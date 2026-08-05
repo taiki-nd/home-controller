@@ -168,8 +168,12 @@ void main() {
       final query = adapter.requests.single.queryParameters['query'] as String;
       expect(query, contains('arid:(mbid-1)'));
       expect(query, contains('firstreleasedate:[2026-07-05 TO 2026-11-02]'));
-      expect(query, contains('primarytype:(Album OR EP)'));
-      expect(query, contains('-secondarytype:*'));
+      expect(query, contains('primarytype:(Album OR EP OR Single)'));
+      // 二次タイプを一律に弾くと Remix まで落ちる。除外は名指しで。
+      expect(query, isNot(contains('-secondarytype:*')));
+      expect(query, contains('-secondarytype:('));
+      expect(query, contains('Compilation OR Live'));
+      expect(query, isNot(contains('Remix')));
     });
 
     test('User-Agent を必ず載せる（無いと 403）', () async {

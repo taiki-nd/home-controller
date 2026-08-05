@@ -36,6 +36,15 @@ class NewRelease {
   String get coverArtUrl =>
       'https://coverartarchive.org/release-group/$releaseGroupMbid/front-250';
 
+  /// `Album` / `Single` / `Album · Remix`。
+  ///
+  /// シングルとリミックスも新譜として拾うので、一次タイプだけだと
+  /// リミックス盤が普通のアルバムと見分けられない。
+  String? get typeLabel {
+    final parts = [?primaryType, ...secondaryTypes];
+    return parts.isEmpty ? null : parts.join(' · ');
+  }
+
   bool isUpcoming(DateTime now) {
     final date = releaseDate;
     if (date == null) return false;

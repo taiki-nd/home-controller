@@ -409,7 +409,7 @@ Spotify SDK系のネイティブプラグインは**不要**。
 | Spotify アーティストID → MBID | `GET /ws/2/url?resource=https://open.spotify.com/artist/{id}&inc=artist-rels` で引ける。**名寄せ不要** |
 | 1クエリにまとめられる arid 数 | 100 は 200 OK（URL 4,535字）／ 200 は **414 URI Too Long** |
 | 日付での絞り込み | `arid:(a OR b …) AND firstreleasedate:[YYYY-MM-DD TO YYYY-MM-DD]` |
-| ノイズ落とし | `AND primarytype:(Album OR EP) AND -secondarytype:*` で 10件 → 3件 |
+| ノイズ落とし | `AND primarytype:(Album OR EP OR Single) AND -secondarytype:(Compilation OR Live OR …)`。**シングルとリミックスは新譜として拾う**（2026-08-06 に方針変更）。`-secondarytype:*` だと Remix まで落ちるので使わない |
 | User-Agent | **必須。**無しは 403 |
 
 ### リクエスト予算（フォロー200人）

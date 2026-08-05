@@ -268,13 +268,19 @@ class _ReleaseRow extends StatelessWidget {
                       // 未発売は「まだ鳴らせない」ので色で区別する。
                       color: upcoming ? AppColors.amber : AppColors.white(0.35),
                     ),
-                    if (release.primaryType != null) ...[
+                    if (release.typeLabel != null) ...[
                       const SizedBox(width: 8),
-                      Text(
-                        release.primaryType!,
-                        style: AppText.body(
-                          compact ? 10 : 11,
-                          color: AppColors.white(0.28),
+                      // `Album · Remix` まで伸びるので、日付ラベルを押し出さない
+                      // よう幅は余りぶんだけ。
+                      Flexible(
+                        child: Text(
+                          release.typeLabel!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppText.body(
+                            compact ? 10 : 11,
+                            color: AppColors.white(0.28),
+                          ),
                         ),
                       ),
                     ],
