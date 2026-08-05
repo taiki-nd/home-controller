@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../services/auth_service.dart';
+import '../services/device_name_cache.dart';
 import '../services/musicbrainz_api.dart';
 import '../services/spotify_api.dart';
 import 'new_releases_controller.dart';
@@ -17,13 +18,17 @@ class MusicSection extends ChangeNotifier {
   MusicSection({AuthService? auth, SpotifyApi? api, MusicBrainzApi? musicBrainz})
     : _auth = auth ?? AuthService(),
       _injectedApi = api,
-      _injectedMusicBrainz = musicBrainz {
+      _injectedMusicBrainz = musicBrainz,
+      // 偽 Spotify を挿されているとき（main_mock）は端末に何も書かない。
+      // モックの偽名が本番の名前キャッシュに混ざらないようにする。
+      _deviceNames = api == null ? DeviceNameCache() : null {
     _auth.addListener(_syncPlayer);
   }
 
   final AuthService _auth;
   final SpotifyApi? _injectedApi;
   final MusicBrainzApi? _injectedMusicBrainz;
+  final DeviceNameCache? _deviceNames;
 
   late final SpotifyApi _api = _injectedApi ?? SpotifyApi(_auth);
   late final MusicBrainzApi _musicBrainz =
@@ -64,7 +69,8 @@ class MusicSection extends ChangeNotifier {
   void _syncPlayer() {
     final signedIn = _auth.isSignedIn;
     if (signedIn && _player == null) {
-      _player = PlayerController(_api)..addListener(notifyListeners);
+      _player = PlayerController(_api, deviceNames: _deviceNames)
+        ..addListener(notifyListeners);
       _newReleases = NewReleasesController(_api, _musicBrainz);
     } else if (!signedIn && _player != null) {
       _player?.removeListener(notifyListeners);

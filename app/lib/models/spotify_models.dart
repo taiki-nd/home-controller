@@ -217,19 +217,50 @@ enum SpotifyDeviceKind { speaker, tv, smartphone, computer, other }
 class SpotifyDevice {
   const SpotifyDevice({
     required this.id,
-    required this.name,
+    required String? name,
     required this.kind,
     required this.isActive,
     required this.isRestricted,
     this.volumePercent,
-  });
+  }) : realName = name;
 
   final String? id;
-  final String name;
+
+  /// 信用できる表示名。Spotify が表示名を持っていないときは null。
+  /// 表示には [name] を使う。
+  final String? realName;
+
   final SpotifyDeviceKind kind;
   final bool isActive;
   final bool isRestricted;
   final int? volumePercent;
+
+  /// 画面に出す名前。[realName] が無ければ既定文言に落とす。
+  String get name => realName ?? 'Unknown device';
+
+  /// Spotify が name にデバイス識別子を返してきたかどうか。
+  ///
+  /// Connect スピーカー（WiiM 等）は LAN 上の zeroconf で公式クライアントに
+  /// 見つけてもらい、公式クライアントがバックエンドに登録して初めて表示名が
+  /// 付く。それより前は `/me/player/devices` の name が識別子そのものになり、
+  /// 画面には英数字の羅列が出る。名前として使えないので弾く。
+  ///
+  /// 誤検知を避けるため「16進だけで 24 文字以上」か「id と同一」に限る。
+  /// 人が付ける名前がこの形になることは無い。
+  static bool looksLikeIdentifier(String value, {String? id}) {
+    if (id != null && value == id) return true;
+    return RegExp(r'^[0-9a-fA-F]{24,}$').hasMatch(value);
+  }
+
+  /// キャッシュしておいた表示名を当てた複製。
+  SpotifyDevice withName(String value) => SpotifyDevice(
+    id: id,
+    name: value,
+    kind: kind,
+    isActive: isActive,
+    isRestricted: isRestricted,
+    volumePercent: volumePercent,
+  );
 
   String get kindLabel => switch (kind) {
     SpotifyDeviceKind.speaker => 'Speaker',
@@ -242,9 +273,15 @@ class SpotifyDevice {
   static SpotifyDevice? fromJson(Map<String, dynamic>? json) {
     if (json == null) return null;
     final raw = (json['type'] as String? ?? '').toLowerCase();
+    final id = json['id'] as String?;
+    final rawName = (json['name'] as String?)?.trim();
     return SpotifyDevice(
-      id: json['id'] as String?,
-      name: json['name'] as String? ?? 'Unknown device',
+      id: id,
+      name: rawName == null ||
+              rawName.isEmpty ||
+              looksLikeIdentifier(rawName, id: id)
+          ? null
+          : rawName,
       kind: switch (raw) {
         'speaker' || 'avr' || 'stb' || 'audio_dongle' => SpotifyDeviceKind.speaker,
         'tv' || 'castvideo' => SpotifyDeviceKind.tv,

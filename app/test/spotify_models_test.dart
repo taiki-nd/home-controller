@@ -183,5 +183,48 @@ void main() {
       expect(kindOf('Computer'), SpotifyDeviceKind.computer);
       expect(kindOf('Unknown'), SpotifyDeviceKind.other);
     });
+
+    test('name が識別子の羅列なら名前として採らない', () {
+      // Connect スピーカーが公式クライアントに登録される前の返り。
+      final raw = SpotifyDevice.fromJson({
+        'id': '0123456789abcdef0123456789abcdef01234567',
+        'name': '0123456789abcdef0123456789abcdef01234567',
+        'type': 'Speaker',
+      })!;
+      expect(raw.realName, isNull);
+      expect(raw.name, 'Unknown device');
+
+      // 16進 24 文字以上なら id と一致していなくても弾く。
+      expect(
+        SpotifyDevice.fromJson({
+          'name': 'deadbeefdeadbeefdeadbeefdead',
+          'type': 'Speaker',
+        })!.realName,
+        isNull,
+      );
+    });
+
+    test('人が付けた名前は弾かない', () {
+      String? nameOf(String value) =>
+          SpotifyDevice.fromJson({'name': value, 'type': 'Speaker'})!.realName;
+      expect(nameOf('WiiM Ultra'), 'WiiM Ultra');
+      expect(nameOf('DEADBEEF'), 'DEADBEEF'); // 16 進でも 24 文字未満
+      expect(nameOf('nodataikinoMacBookPro'), 'nodataikinoMacBookPro');
+      expect(nameOf('  WiiM Ultra  '), 'WiiM Ultra');
+      expect(nameOf(''), isNull);
+    });
+
+    test('withName で名前だけ差し替わる', () {
+      final device = SpotifyDevice.fromJson({
+        'id': 'dev',
+        'name': null,
+        'type': 'Speaker',
+        'volume_percent': 40,
+      })!.withName('WiiM Ultra');
+      expect(device.name, 'WiiM Ultra');
+      expect(device.id, 'dev');
+      expect(device.kind, SpotifyDeviceKind.speaker);
+      expect(device.volumePercent, 40);
+    });
   });
 }

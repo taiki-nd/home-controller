@@ -6,6 +6,7 @@ import 'package:flutter/painting.dart';
 import 'package:palette_generator/palette_generator.dart';
 
 import '../models/spotify_models.dart';
+import '../services/device_name_cache.dart';
 import '../services/spotify_api.dart';
 import '../theme/tokens.dart';
 
@@ -34,13 +35,17 @@ class PlayerController extends ChangeNotifier {
   /// [now] はテスト用。ポーリングの間隔は「曲の残り時間」から決まるので、
   /// 時計を差し替えられないと fake_async でスケジュールを検証できない
   /// （fake_async が進めるのはタイマーだけで [DateTime.now] は実時刻のまま）。
-  PlayerController(this._api, {DateTime Function()? now})
-    : _now = now ?? DateTime.now {
+  PlayerController(this._api, {DateTime Function()? now, DeviceNameCache? deviceNames})
+    : _now = now ?? DateTime.now,
+      _deviceNameCache = deviceNames {
     _playbackFetchedAt = _now();
   }
 
   final SpotifyApi _api;
   final DateTime Function() _now;
+
+  /// null ならデバイス名の記憶をしない（テスト・モック用）。
+  final DeviceNameCache? _deviceNameCache;
 
   // ── Spotify から取ってきたもの ────────────────────────────────────────
   PlaybackState _playback = PlaybackState.stopped;
@@ -56,6 +61,10 @@ class PlayerController extends ChangeNotifier {
   bool _deviceLost = false;
   bool _playlistsLoaded = false;
   String? _preferredDeviceId;
+
+  /// デバイス id → 一度でも Spotify が返してきた本当の表示名。
+  Map<String, String> _deviceNames = {};
+
   String? _toast;
   String? _errorBanner;
   Timer? _toastTimer;
@@ -140,7 +149,8 @@ class PlayerController extends ChangeNotifier {
   bool get showStoppedBanner => isStopped && !_deviceLost;
 
   SpotifyDevice? get activeDevice {
-    if (_playback.device != null) return _playback.device;
+    final playing = _playback.device;
+    if (playing != null) return _applyCachedName(playing);
     for (final device in _devices) {
       if (device.isActive) return device;
     }
@@ -212,6 +222,8 @@ class PlayerController extends ChangeNotifier {
   // ── ライフサイクル ────────────────────────────────────────────────────
 
   Future<void> start() async {
+    // 名前の記憶はデバイス取得より先に読む。後だと初回だけ Unknown が出る。
+    _deviceNames = await _deviceNameCache?.load() ?? {};
     await refreshDevices(silent: true);
     await _pollOnce();
     unawaited(loadPlaylists());
@@ -257,6 +269,8 @@ class PlayerController extends ChangeNotifier {
       _staleUri = null;
       _skipUntil = null;
       _pushHistoryIfChanged(state.track);
+      // 鳴っている先の名前もここで覚える（一覧より先に取れることがある）。
+      _applyCachedNames([?state.device]);
       _playback = state;
       _playbackFetchedAt = _now();
       _errorBanner = null;
@@ -462,9 +476,34 @@ class PlayerController extends ChangeNotifier {
 
   // ── デバイス ─────────────────────────────────────────────────────────
 
+  /// 本当の名前が付いているものを覚え、名前を失っているものには当て直す。
+  ///
+  /// Connect スピーカーは公式クライアントに登録されるまで name が識別子で
+  /// 返ってくる（`SpotifyDevice.looksLikeIdentifier`）。一度でも名前が取れた
+  /// なら以降はそれを出す。初回だけは Unknown device のままになる。
+  List<SpotifyDevice> _applyCachedNames(List<SpotifyDevice> devices) {
+    var learned = false;
+    for (final device in devices) {
+      final id = device.id;
+      final name = device.realName;
+      if (id == null || name == null || _deviceNames[id] == name) continue;
+      _deviceNames.remove(id); // 挿入順を「最後に覚えた順」に保つ
+      _deviceNames[id] = name;
+      learned = true;
+    }
+    if (learned) unawaited(_deviceNameCache?.save(_deviceNames) ?? Future.value());
+    return devices.map(_applyCachedName).toList(growable: false);
+  }
+
+  SpotifyDevice _applyCachedName(SpotifyDevice device) {
+    if (device.realName != null) return device;
+    final cached = _deviceNames[device.id];
+    return cached == null ? device : device.withName(cached);
+  }
+
   Future<void> refreshDevices({bool silent = false}) async {
     try {
-      _devices = await _api.devices();
+      _devices = _applyCachedNames(await _api.devices());
       // アイドル中の WiiM は一覧に出てこないことがある（設計メモ §9）。
       // 「出力できる先が 1 つも無い」ときだけデバイス消失として扱う。
       final playable = _devices.where((d) => !d.isRestricted && d.id != null);
