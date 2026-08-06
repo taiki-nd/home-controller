@@ -359,12 +359,17 @@ const _deviceSpecs = [
   ('iphone', 'taiki の iPhone', SpotifyDeviceKind.smartphone, 78),
 ];
 
+/// 自分の user id。p4 だけ他人のものにして、「追加先には出てこない」を
+/// モックでも踏めるようにしてある。
+const _mockUserId = 'taiki';
+
 final List<PlaylistSummary> _playlists = [
   const PlaylistSummary(
     id: 'p1',
     uri: 'spotify:playlist:p1',
     name: 'Party 2026',
     ownerName: 'You',
+    ownerId: _mockUserId,
     trackCount: 84,
     artworkUrl: 'mock/pl-1.png',
   ),
@@ -373,6 +378,7 @@ final List<PlaylistSummary> _playlists = [
     uri: 'spotify:playlist:p2',
     name: '日曜の朝',
     ownerName: 'Taiki',
+    ownerId: _mockUserId,
     trackCount: 42,
     artworkUrl: 'mock/pl-2.png',
   ),
@@ -381,6 +387,7 @@ final List<PlaylistSummary> _playlists = [
     uri: 'spotify:playlist:p3',
     name: 'Late Night Drive',
     ownerName: 'Taiki',
+    ownerId: _mockUserId,
     trackCount: 120,
     artworkUrl: 'mock/pl-3.png',
   ),
@@ -389,6 +396,7 @@ final List<PlaylistSummary> _playlists = [
     uri: 'spotify:playlist:p4',
     name: 'ごはんのとき',
     ownerName: 'みんな',
+    ownerId: 'other',
     trackCount: 57,
     artworkUrl: 'mock/pl-4.png',
   ),
@@ -500,6 +508,36 @@ class _MockApi extends SpotifyApi {
   Future<List<PlaylistSummary>> playlists({int limit = 50}) async {
     await _read();
     return List.of(_playlists);
+  }
+
+  @override
+  Future<String?> currentUserId() async {
+    await _read();
+    return _mockUserId;
+  }
+
+  @override
+  Future<void> addTrackToPlaylist(String playlistId, String trackUri) async {
+    await _write();
+    _bump(playlistId, 1);
+  }
+
+  @override
+  Future<void> removeTrackFromPlaylist(
+    String playlistId,
+    String trackUri,
+  ) async {
+    await _write();
+    _bump(playlistId, -1);
+  }
+
+  /// 次に `playlists()` を叩いたときも増減が残るようにしておく。
+  void _bump(String playlistId, int delta) {
+    final index = _playlists.indexWhere((p) => p.id == playlistId);
+    if (index < 0) return;
+    _playlists[index] = _playlists[index].withTrackCount(
+      _playlists[index].trackCount + delta,
+    );
   }
 
   @override

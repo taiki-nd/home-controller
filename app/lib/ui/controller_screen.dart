@@ -48,6 +48,10 @@ class _ControllerScreenState extends State<ControllerScreen>
   PlaylistSummary? _pendingPlaylist;
   SpotifyAlbumMatch? _pendingAlbum;
 
+  /// プレイリストから外す確認待ち。曲とリストの組で持つ（確認の途中で曲が
+  /// 変わっても、押したときの組を消す）。
+  (PlaylistSummary, Track)? _pendingRemoval;
+
   /// 再連携バナーを閉じたか。次の起動ではまた出る（永続化しない）。
   bool _reauthDismissed = false;
 
@@ -156,6 +160,7 @@ class _ControllerScreenState extends State<ControllerScreen>
                               onPlayNow: _askPlayNow,
                               onPlayPlaylist: _askPlaylist,
                               onPlayRelease: _askRelease,
+                              onRemoveFromPlaylist: _askRemoveFromPlaylist,
                               topInset: contentTop,
                               attribution: _attributionSlot(controller),
                               menu: _menuButton(),
@@ -166,6 +171,7 @@ class _ControllerScreenState extends State<ControllerScreen>
                               onPlayNow: _askPlayNow,
                               onPlayPlaylist: _askPlaylist,
                               onPlayRelease: _askRelease,
+                              onRemoveFromPlaylist: _askRemoveFromPlaylist,
                               topInset: contentTop,
                               attribution: _attributionSlot(
                                 controller,
@@ -267,6 +273,21 @@ class _ControllerScreenState extends State<ControllerScreen>
                         ),
                       ),
 
+                    if (_pendingRemoval != null)
+                      Positioned.fill(
+                        child: PlaylistRemoveConfirm(
+                          playlist: _pendingRemoval!.$1,
+                          track: _pendingRemoval!.$2,
+                          onConfirm: () {
+                            final (playlist, track) = _pendingRemoval!;
+                            setState(() => _pendingRemoval = null);
+                            controller.removeFromPlaylist(playlist, track);
+                          },
+                          onCancel: () =>
+                              setState(() => _pendingRemoval = null),
+                        ),
+                      ),
+
                     if (_pendingAlbum != null)
                       Positioned.fill(
                         child: ReleasePlayConfirm(
@@ -337,6 +358,9 @@ class _ControllerScreenState extends State<ControllerScreen>
       if (mounted) controller.showToast(e.message);
     }
   }
+
+  void _askRemoveFromPlaylist(PlaylistSummary playlist, Track track) =>
+      setState(() => _pendingRemoval = (playlist, track));
 
   void _askPlaylist(PlaylistSummary playlist) =>
       setState(() => _pendingPlaylist = playlist);

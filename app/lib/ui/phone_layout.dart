@@ -12,6 +12,7 @@ import 'widgets/marquee_text.dart';
 import 'widgets/new_releases_panel.dart';
 import 'widgets/orbiting_light.dart';
 import 'widgets/panels.dart';
+import 'widgets/playlist_button.dart';
 import 'widgets/swipe_skip.dart';
 import 'widgets/transport.dart';
 
@@ -25,6 +26,7 @@ class PhoneLayout extends StatelessWidget {
     required this.onPlayNow,
     required this.onPlayPlaylist,
     required this.onPlayRelease,
+    required this.onRemoveFromPlaylist,
     required this.attribution,
     required this.topInset,
     this.menu,
@@ -35,6 +37,10 @@ class PhoneLayout extends StatelessWidget {
   final ValueChanged<Track> onPlayNow;
   final ValueChanged<PlaylistSummary> onPlayPlaylist;
   final ValueChanged<NewRelease> onPlayRelease;
+
+  /// 再生中の曲をプレイリストから外す（確認ダイアログは呼ぶ側）。
+  final PlaylistRemoveRequest onRemoveFromPlaylist;
+
   final Widget attribution;
 
   /// デバイスピルの左に置く ☰。行は増やさない。null なら出さない。
@@ -73,6 +79,7 @@ class PhoneLayout extends StatelessWidget {
                 attribution: attribution,
                 menu: menu,
                 topInset: topInset,
+                onRemoveFromPlaylist: onRemoveFromPlaylist,
               ),
             ),
             AnimatedPositioned(
@@ -103,12 +110,14 @@ class _NowPlaying extends StatelessWidget {
     required this.attribution,
     required this.topInset,
     required this.menu,
+    required this.onRemoveFromPlaylist,
   });
 
   final PlayerController controller;
   final Widget attribution;
   final Widget? menu;
   final double topInset;
+  final PlaylistRemoveRequest onRemoveFromPlaylist;
 
   @override
   Widget build(BuildContext context) {
@@ -176,14 +185,31 @@ class _NowPlaying extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 24),
-              MarqueeText(
-                track?.name ?? '再生していません',
-                style: AppText.body(
-                  30,
-                  weight: FontWeight.w900,
-                  height: 1.08,
-                  letterSpacing: -0.6,
-                ),
+              // 曲名の右にプレイリストのボタン。行は増やさない。
+              // 停止中はボタン自体が消える（幅は曲名が使う）。
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: MarqueeText(
+                      track?.name ?? '再生していません',
+                      style: AppText.body(
+                        30,
+                        weight: FontWeight.w900,
+                        height: 1.08,
+                        letterSpacing: -0.6,
+                      ),
+                    ),
+                  ),
+                  if (track != null) ...[
+                    const SizedBox(width: 12),
+                    PlaylistToggleButton(
+                      controller: controller,
+                      compact: true,
+                      onRemove: onRemoveFromPlaylist,
+                    ),
+                  ],
+                ],
               ),
               const SizedBox(height: 6),
               MarqueeText(
@@ -242,6 +268,10 @@ class _DevicePill extends StatelessWidget {
   }
 }
 
+/// シートの中身（タブ + パネル）が縮まずに入る最小の高さ。
+/// タブの段 58 + パネルの見出し 44 + 余白 で、リストが 0 行でも溢れない値。
+const _minBodyHeight = 150.0;
+
 class _Sheet extends StatelessWidget {
   const _Sheet({
     required this.controller,
@@ -298,15 +328,25 @@ class _Sheet extends StatelessWidget {
                 ),
               ),
               Expanded(
-                child: controller.sheetOpen
-                    ? _SheetBody(
-                        controller: controller,
-                        newReleases: newReleases,
-                        onPlayNow: onPlayNow,
-                        onPlayPlaylist: onPlayPlaylist,
-                        onPlayRelease: onPlayRelease,
-                      )
-                    : _SheetPeek(controller: controller),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    // **開いた瞬間はまだシートが伸びていない。** sheetOpen は即座に
+                    // 反転するが、高さを動かすのは AnimatedPositioned なので、
+                    // 最初の 1 フレームは閉じたときの高さで組まれる。そこに本体を
+                    // 入れると Column が溢れて赤縞が出るので、収まる高さになるまで
+                    // 1 行プレビューのままにしておく。
+                    final fits = constraints.maxHeight >= _minBodyHeight;
+                    return controller.sheetOpen && fits
+                        ? _SheetBody(
+                            controller: controller,
+                            newReleases: newReleases,
+                            onPlayNow: onPlayNow,
+                            onPlayPlaylist: onPlayPlaylist,
+                            onPlayRelease: onPlayRelease,
+                          )
+                        : _SheetPeek(controller: controller);
+                  },
+                ),
               ),
             ],
           ),

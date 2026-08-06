@@ -62,6 +62,12 @@ class PlayerController extends ChangeNotifier {
   bool _playlistsLoaded = false;
   String? _preferredDeviceId;
 
+  /// 自分の user id。プレイリストの編集可否の判定だけに使う。
+  String? _userId;
+
+  /// 「追加先を選ぶ」モードで押された曲。
+  Track? _addingTrack;
+
   /// デバイス id → 一度でも Spotify が返してきた本当の表示名。
   Map<String, String> _deviceNames = {};
 
@@ -227,6 +233,7 @@ class PlayerController extends ChangeNotifier {
     await refreshDevices(silent: true);
     await _pollOnce();
     unawaited(loadPlaylists());
+    unawaited(_loadUserId());
   }
 
   /// バックグラウンドではポーリングを完全に止める（設計メモ §8）。
@@ -420,6 +427,9 @@ class PlayerController extends ChangeNotifier {
   void selectTab(RailTab value) {
     _tab = value;
     if (value != RailTab.queue) _sheetOpen = true;
+    // 別のタブへ移ったら「追加先を選ぶ」は畳む。行の意味（再生 / 追加）が
+    // 見えないところで変わったままになるのを防ぐ。
+    if (value != RailTab.playlists) _addingTrack = null;
     if (value == RailTab.playlists && !_playlistsLoaded) {
       unawaited(loadPlaylists());
     }
@@ -428,6 +438,7 @@ class PlayerController extends ChangeNotifier {
 
   void toggleSheet() {
     _sheetOpen = !_sheetOpen;
+    if (!_sheetOpen) _addingTrack = null;
     notifyListeners();
   }
 
@@ -850,6 +861,109 @@ class PlayerController extends ChangeNotifier {
       _reportBackgroundFailure('playlists', e);
     }
     if (!_disposed) notifyListeners();
+  }
+
+  /// 自分の Spotify user id。プレイリストを編集できるかの判定だけに使う。
+  /// 取れなければ null のまま（全リストを編集可として扱う）。
+  Future<void> _loadUserId() async {
+    try {
+      final id = await _api.currentUserId();
+      if (_disposed || id == null) return;
+      _userId = id;
+      notifyListeners();
+    } on SpotifyApiException catch (e) {
+      debugPrint('currentUserId failed: $e');
+    }
+  }
+
+  bool canEdit(PlaylistSummary playlist) => playlist.isEditableBy(_userId);
+
+  /// 曲を足せるプレイリストだけ。他人のリスト（フォロー中）を落とす。
+  List<PlaylistSummary> get editablePlaylists =>
+      _playlists.where(canEdit).toList(growable: false);
+
+  /// 一覧から落とした（＝編集できない）リストの数。
+  int get readOnlyPlaylistCount => _playlists.length - editablePlaylists.length;
+
+  /// 今の曲が「入っていると確実に言える」プレイリスト。
+  ///
+  /// **Spotify には「この曲を含むプレイリスト」を返す API が無い。** 全リストの
+  /// 中身を舐めれば分かるが数十リクエストになる。0 リクエストで確実に言えるのは
+  /// 再生元（context）だけなので、判定をそこに限っている。手元の一覧に無い
+  /// context（他人の公開リスト・エディトリアル）や、編集できないものは null。
+  PlaylistSummary? get currentTrackPlaylist {
+    if (currentTrack == null) return null;
+    final uri = _playback.contextUri;
+    if (uri == null || !uri.startsWith('spotify:playlist:')) return null;
+    for (final playlist in _playlists) {
+      if (playlist.uri == uri) return canEdit(playlist) ? playlist : null;
+    }
+    return null;
+  }
+
+  /// 「追加先を選ぶ」モードで押された曲。null なら通常モード。
+  ///
+  /// 選んでいる間に曲が変わっても、押した時点の曲を足したい。だから
+  /// [currentTrack] を見ずにここへ留めておく。
+  Track? get addingTrack => _addingTrack;
+
+  /// 追加先の選択を始める。プレイリストのタブを開くだけで、まだ何も書かない。
+  void beginAddToPlaylist(Track track) {
+    if (!_playlistsLoaded) unawaited(loadPlaylists());
+    // openSheet → selectTab の中で notifyListeners まで走る。
+    // playlists 以外のタブへ移ると _addingTrack は落ちるので順序は変えない。
+    _addingTrack = track;
+    openSheet(RailTab.playlists);
+  }
+
+  void cancelAddToPlaylist() {
+    if (_addingTrack == null) return;
+    _addingTrack = null;
+    notifyListeners();
+  }
+
+  Future<void> addToPlaylist(PlaylistSummary playlist, Track track) async {
+    // 選択は押した時点で終わり。失敗しても選び直しからやらせる。
+    _addingTrack = null;
+    notifyListeners();
+    final ok = await _guard(
+      () => _api.addTrackToPlaylist(playlist.id, track.uri),
+    );
+    if (!ok) return;
+    _bumpTrackCount(playlist, 1);
+    showToast('「${track.name}」を ${playlist.name} に追加しました');
+    _refreshQueueIfContext(playlist);
+  }
+
+  Future<void> removeFromPlaylist(
+    PlaylistSummary playlist,
+    Track track,
+  ) async {
+    final ok = await _guard(
+      () => _api.removeTrackFromPlaylist(playlist.id, track.uri),
+    );
+    if (!ok) return;
+    _bumpTrackCount(playlist, -1);
+    showToast('「${track.name}」を ${playlist.name} から削除しました');
+    _refreshQueueIfContext(playlist);
+  }
+
+  /// 触ったのが今流しているリストなら、この先の並びが変わっている。
+  /// 鳴っている曲自体は消しても止まらない（Spotify 側の挙動）。
+  void _refreshQueueIfContext(PlaylistSummary playlist) {
+    if (_playback.contextUri == playlist.uri) unawaited(_refreshQueueSoon());
+  }
+
+  /// 一覧の "42 songs" を手元で合わせる。取り直しの 1 リクエストを省くだけ。
+  void _bumpTrackCount(PlaylistSummary playlist, int delta) {
+    final index = _playlists.indexWhere((p) => p.id == playlist.id);
+    if (index < 0) return;
+    final updated = [..._playlists];
+    updated[index] = updated[index].withTrackCount(
+      updated[index].trackCount + delta,
+    );
+    _playlists = updated;
+    notifyListeners();
   }
 
   // ── 配色抽出 ─────────────────────────────────────────────────────────

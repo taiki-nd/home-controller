@@ -228,6 +228,15 @@ class SpotifyApi {
         .toList();
   }
 
+  /// `GET /me` の `id`。プレイリストを編集できるかの判定にだけ使う。
+  ///
+  /// email / country は scope が要るが、`id` は user token だけで返ってくる。
+  /// それでも失敗したら呼ぶ側は null 扱いで続ける（[PlaylistSummary.isEditableBy]）。
+  Future<String?> currentUserId() async {
+    final response = await _send('GET', '/me');
+    return _asMap(response.data)['id'] as String?;
+  }
+
   // ── 書き込み ───────────────────────────────────────────────────────────
 
   /// プレイリストを base として再生する。
@@ -286,6 +295,35 @@ class SpotifyApi {
       query: {
         'state': on,
         'device_id': ?deviceId,
+      },
+    );
+  }
+
+  /// プレイリストの末尾に 1 曲足す。要 `playlist-modify-public` /
+  /// `playlist-modify-private`。
+  ///
+  /// **重複はチェックされない。** 同じ曲を 2 回足せば 2 行入る。手前で
+  /// 「もう入っているか」を知る API は無いので、呼ぶ側で押させ過ぎない。
+  Future<void> addTrackToPlaylist(String playlistId, String trackUri) {
+    return _send(
+      'POST',
+      '/playlists/$playlistId/tracks',
+      body: {
+        'uris': [trackUri],
+      },
+    );
+  }
+
+  /// プレイリストからその曲を消す。位置を指定しないので、**同じ曲が複数入って
+  /// いれば全部消える**（Spotify の仕様）。
+  Future<void> removeTrackFromPlaylist(String playlistId, String trackUri) {
+    return _send(
+      'DELETE',
+      '/playlists/$playlistId/tracks',
+      body: {
+        'tracks': [
+          {'uri': trackUri},
+        ],
       },
     );
   }
@@ -381,7 +419,13 @@ class SpotifyApi {
 
       case 404:
         // Player 系の 404 は基本的に NO_ACTIVE_DEVICE。
-        throw NoActiveDeviceException();
+        // それ以外（プレイリスト等）の 404 は「その id が無い」なので、
+        // デバイス消失のオーバーレイを出してしまわないよう混ぜない。
+        if (path.startsWith('/me/player')) throw NoActiveDeviceException();
+        throw SpotifyApiException(
+          _errorMessage(response) ?? '対象が見つかりませんでした',
+          statusCode: 404,
+        );
 
       case 429:
         _consecutive429++;

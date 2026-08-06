@@ -290,6 +290,64 @@ class _PlaylistConfirmState extends State<PlaylistConfirm> {
   }
 }
 
+/// プレイリストから 1 曲外す確認。
+///
+/// 再生は止まらない（Spotify は鳴っている曲を消してもそのまま流し切る）が、
+/// プレイリスト側は元に戻せないので必ずここを通す。同じ曲が複数入っていれば
+/// **全部消える**ので、それも書いておく。
+class PlaylistRemoveConfirm extends StatelessWidget {
+  const PlaylistRemoveConfirm({
+    super.key,
+    required this.track,
+    required this.playlist,
+    required this.onConfirm,
+    required this.onCancel,
+  });
+
+  final Track track;
+  final PlaylistSummary playlist;
+  final VoidCallback onConfirm;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    return _Scrim(
+      onTapOutside: onCancel,
+      child: _DialogCard(
+        maxWidth: 460,
+        children: [
+          CapsLabel('Remove from playlist', size: 11, color: AppColors.white(0.4)),
+          const SizedBox(height: 14),
+          Text(
+            '「${track.name}」を ${playlist.name} から削除',
+            style: AppText.body(
+              26,
+              weight: FontWeight.w900,
+              height: 1.25,
+              letterSpacing: -0.5,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'プレイリストから外します（元に戻せません）。同じ曲が複数入っている場合は '
+            'まとめて消えます。再生は止まりません。',
+            style: AppText.body(15, color: AppColors.white(0.62), height: 1.8),
+          ),
+          const SizedBox(height: 20),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              WhiteButton(label: 'リストから削除', onPressed: onConfirm),
+              OutlineButton(label: 'キャンセル', onPressed: onCancel),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// 新譜の行を押したあとの確認（設計メモ §14）。
 ///
 /// アルバムを context として流すので、[PlaylistConfirm] と同じくキューは消える。

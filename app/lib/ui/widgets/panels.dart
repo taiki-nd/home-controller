@@ -434,6 +434,11 @@ class _SearchRow extends StatelessWidget {
 
 /// 「Playlists」。base として流すプレイリストを選ぶ。
 /// 自分のプレイリストのみ（`GET /me/playlists`）。
+///
+/// [PlayerController.addingTrack] が入っているときだけ「追加先を選ぶ」モードに
+/// なり、行の意味が **再生 → このリストへ追加** に変わる。意味が黙って変わると
+/// 事故になるので、上の帯で対象の曲名を必ず出し、行のボタンも Play / Add で
+/// 描き分ける。追加できないリスト（他人のもの）はこのモードでは並べない。
 class PlaylistsPanel extends StatelessWidget {
   const PlaylistsPanel({
     super.key,
@@ -449,31 +454,48 @@ class PlaylistsPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final accent = controller.palette.accent;
-    final playlists = controller.playlists;
+    final adding = controller.addingTrack;
+    final playlists = adding == null
+        ? controller.playlists
+        : controller.editablePlaylists;
+
+    // 追加しようとしている曲が、今流しているリストの曲そのものなら、
+    // そのリストへの再追加は重複になる。行を潰して押させない。
+    final alreadyInUri = adding != null && adding.uri == controller.currentTrack?.uri
+        ? controller.currentTrackPlaylist?.uri
+        : null;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
-          children: [
-            Container(
-              width: 6,
-              height: 6,
-              decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: MarqueeText(
-                controller.contextLabel,
-                style: AppText.body(
-                  compact ? 11 : 12,
-                  color: AppColors.white(0.42),
-                  height: 1.6,
+        if (adding == null)
+          Row(
+            children: [
+              Container(
+                width: 6,
+                height: 6,
+                decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: MarqueeText(
+                  controller.contextLabel,
+                  style: AppText.body(
+                    compact ? 11 : 12,
+                    color: AppColors.white(0.42),
+                    height: 1.6,
+                  ),
                 ),
               ),
-            ),
-          ],
-        ),
+            ],
+          )
+        else
+          _AddingHeader(
+            track: adding,
+            accent: accent,
+            compact: compact,
+            onCancel: controller.cancelAddToPlaylist,
+          ),
         SizedBox(height: compact ? 12 : 14),
         Expanded(
           child: !controller.playlistsLoaded
@@ -494,9 +516,13 @@ class PlaylistsPanel extends StatelessWidget {
                       return Padding(
                         padding: const EdgeInsets.fromLTRB(8, 16, 8, 2),
                         child: Text(
-                          playlists.isEmpty
-                              ? 'プレイリストがありません。キューだけでも始められます。'
-                              : '自分のプレイリストのみ。Play で base として流し始めます。',
+                          _footnote(
+                            adding: adding != null,
+                            isEmpty: playlists.isEmpty,
+                            hiddenCount: adding == null
+                                ? 0
+                                : controller.readOnlyPlaylistCount,
+                          ),
                           style: AppText.body(
                             12,
                             color: AppColors.white(0.28),
@@ -505,12 +531,24 @@ class PlaylistsPanel extends StatelessWidget {
                         ),
                       );
                     }
+                    final playlist = playlists[index];
+                    final mode = adding == null
+                        ? _RowMode.play
+                        : playlist.uri == alreadyInUri
+                        ? _RowMode.alreadyIn
+                        : _RowMode.add;
                     return _PlaylistRow(
-                      playlist: playlists[index],
-                      isContext: controller.isContext(playlists[index]),
+                      playlist: playlist,
+                      isContext: controller.isContext(playlist),
                       accent: accent,
                       compact: compact,
-                      onPlay: () => onPlay(playlists[index]),
+                      mode: mode,
+                      onTap: switch (mode) {
+                        _RowMode.play => () => onPlay(playlist),
+                        _RowMode.add => () =>
+                          controller.addToPlaylist(playlist, adding!),
+                        _RowMode.alreadyIn => null,
+                      },
                     );
                   },
                 ),
@@ -520,26 +558,119 @@ class PlaylistsPanel extends StatelessWidget {
   }
 }
 
+/// 「追加先を選ぶ」モードの帯。対象の曲を出して、× で通常モードへ戻す。
+class _AddingHeader extends StatelessWidget {
+  const _AddingHeader({
+    required this.track,
+    required this.accent,
+    required this.compact,
+    required this.onCancel,
+  });
+
+  final Track track;
+  final Color accent;
+  final bool compact;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(Icons.playlist_add_rounded, size: compact ? 16 : 18, color: accent),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CapsLabel('Add to playlist', size: 10, color: accent),
+              const SizedBox(height: 3),
+              Text(
+                track.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppText.body(compact ? 13 : 14, weight: FontWeight.w900),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 8),
+        SizedBox.square(
+          dimension: kMinTapTarget,
+          child: IconButton(
+            onPressed: onCancel,
+            tooltip: '追加をやめる',
+            padding: EdgeInsets.zero,
+            icon: Icon(Icons.close_rounded, size: 20, color: AppColors.white(0.5)),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// リストの行を押したときに何が起きるか。
+enum _RowMode {
+  /// base として流す（通常モード）。
+  play,
+
+  /// 選んだ曲をこのリストへ足す。
+  add,
+
+  /// もう入っている（＝今流しているリスト）。押させない。
+  alreadyIn,
+}
+
+String _footnote({
+  required bool adding,
+  required bool isEmpty,
+  required int hiddenCount,
+}) {
+  if (!adding) {
+    return isEmpty
+        ? 'プレイリストがありません。キューだけでも始められます。'
+        : '自分のプレイリストのみ。Play で base として流し始めます。';
+  }
+  if (isEmpty) return '曲を足せるプレイリストがありません。';
+  final base = '選んだリストの末尾に足します。再生中の曲やキューは変わりません。';
+  // 落としたぶんを黙って隠すと「リストが足りない」ように見える。
+  return hiddenCount == 0 ? base : '$base 編集できない $hiddenCount 件は除いています。';
+}
+
 class _PlaylistRow extends StatelessWidget {
   const _PlaylistRow({
     required this.playlist,
     required this.isContext,
     required this.accent,
     required this.compact,
-    required this.onPlay,
+    required this.mode,
+    required this.onTap,
   });
 
   final PlaylistSummary playlist;
   final bool isContext;
   final Color accent;
   final bool compact;
-  final VoidCallback onPlay;
+  final _RowMode mode;
+
+  /// null なら押せない行（[_RowMode.alreadyIn]）。
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
+    // 追加モードは iPad でも行全体で押せるようにする。右端のボタンだけが
+    // 押せる状態だと、狙う先が Play のときと変わって間違えやすい。
+    final rowTap = compact || mode != _RowMode.play ? onTap : null;
+    return Opacity(
+      opacity: mode == _RowMode.alreadyIn ? 0.45 : 1,
+      child: _rowBody(rowTap),
+    );
+  }
+
+  Widget _rowBody(VoidCallback? rowTap) {
     return HoverRow(
       // スマホは行全体タップ、iPad は右端の Play ボタン。
-      onTap: compact ? onPlay : null,
+      onTap: rowTap,
       padding: EdgeInsets.all(compact ? 8 : 10),
       radius: const BorderRadius.all(Radius.circular(14)),
       child: Row(
@@ -585,13 +716,31 @@ class _PlaylistRow extends StatelessWidget {
           ),
           const SizedBox(width: 10),
           if (compact) ...[
-            if (isContext) CapsLabel('Playing', size: 10, color: accent),
+            if (mode == _RowMode.alreadyIn)
+              CapsLabel('In list', size: 10, color: accent)
+            else if (isContext)
+              CapsLabel('Playing', size: 10, color: accent),
             const SizedBox(width: 8),
-            Icon(Icons.play_arrow_rounded, color: AppColors.white(0.5), size: 22),
-          ] else
+            Icon(
+              mode == _RowMode.play
+                  ? Icons.play_arrow_rounded
+                  : Icons.playlist_add_rounded,
+              color: AppColors.white(0.5),
+              size: 22,
+            ),
+          ] else if (mode == _RowMode.alreadyIn)
+            CapsLabel('In list', size: 11, color: accent)
+          else if (mode == _RowMode.add)
+            GreenButton(
+              label: 'Add',
+              onPressed: onTap,
+              fontSize: 14,
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+            )
+          else
             WhiteButton(
               label: 'Play',
-              onPressed: onPlay,
+              onPressed: onTap,
               fontSize: 14,
               padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
             ),

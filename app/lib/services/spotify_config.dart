@@ -48,6 +48,10 @@ class SpotifyConfig {
     'playlist-read-collaborative',
     // フォロー中アーティスト（`GET /me/following`）。新譜の母集団に使う。
     'user-follow-read',
+    // 再生中の曲をプレイリストへ足す / 消す。公開・非公開で別の scope なので
+    // 両方要る（どちらか欠けると、そちら側のリストだけ 403 になる）。
+    'playlist-modify-public',
+    'playlist-modify-private',
   ];
 
   static bool get isConfigured => clientId.isNotEmpty;

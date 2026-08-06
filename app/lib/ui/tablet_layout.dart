@@ -12,6 +12,7 @@ import 'widgets/marquee_text.dart';
 import 'widgets/new_releases_panel.dart';
 import 'widgets/orbiting_light.dart';
 import 'widgets/panels.dart';
+import 'widgets/playlist_button.dart';
 import 'widgets/soft_surface.dart';
 import 'widgets/swipe_skip.dart';
 import 'widgets/transport.dart';
@@ -31,6 +32,7 @@ class TabletLayout extends StatelessWidget {
     required this.onPlayNow,
     required this.onPlayPlaylist,
     required this.onPlayRelease,
+    required this.onRemoveFromPlaylist,
     required this.attribution,
     required this.topInset,
     this.menu,
@@ -41,6 +43,10 @@ class TabletLayout extends StatelessWidget {
   final ValueChanged<Track> onPlayNow;
   final ValueChanged<PlaylistSummary> onPlayPlaylist;
   final ValueChanged<NewRelease> onPlayRelease;
+
+  /// 再生中の曲をプレイリストから外す（確認ダイアログは呼ぶ側）。
+  final PlaylistRemoveRequest onRemoveFromPlaylist;
+
   final Widget attribution;
 
   /// デバイスピルの左に置く ☰。行は増やさない。null なら出さない。
@@ -67,6 +73,7 @@ class TabletLayout extends StatelessWidget {
             attribution: attribution,
             menu: menu,
             topInset: topInset,
+            onRemoveFromPlaylist: onRemoveFromPlaylist,
           ),
         ),
         SizedBox(
@@ -91,12 +98,14 @@ class _NowPlayingPane extends StatelessWidget {
     required this.attribution,
     required this.topInset,
     required this.menu,
+    required this.onRemoveFromPlaylist,
   });
 
   final PlayerController controller;
   final Widget attribution;
   final Widget? menu;
   final double topInset;
+  final PlaylistRemoveRequest onRemoveFromPlaylist;
 
   @override
   Widget build(BuildContext context) {
@@ -107,10 +116,12 @@ class _NowPlayingPane extends StatelessWidget {
       builder: (context, constraints) {
         // デザインは 570px（停止中 490px）。狭い iPad でも収まるよう上限を掛ける。
         // 高さは中身が使える分（= 全高 - topInset）で測る。
-        // 引く 250 は、上のデバイスピル行と下の 2 行ぶんの取り分。
+        // 引く 280 は、上のデバイスピル行と下の 2 行ぶんの取り分。
+        // メタ行にはプレイリストのボタン（高さ 44）が入るので、文字だけの
+        // 行より背が高い。ここを詰めると狭い iPad で Column が溢れる。
         final artSize = (stopped ? 490.0 : 570.0).clamp(
           200.0,
-          (constraints.maxHeight - topInset - 250).clamp(200.0, 600.0),
+          (constraints.maxHeight - topInset - 280).clamp(200.0, 600.0),
         );
 
         return Padding(
@@ -160,9 +171,25 @@ class _NowPlayingPane extends StatelessWidget {
               const SizedBox(height: 20),
               // アーティスト / アルバムは「Now playing」と同じ体裁の 1 行。
               // 曲がないときだけ、そこに状態を出す。
-              MarqueeText(
-                _metaLine(track) ?? (stopped ? 'LAST PLAYED' : 'NOW PLAYING'),
-                style: AppText.caps(12, AppColors.white(0.55)),
+              // プレイリストのボタンはこの行の右端。行は増やさない。
+              Row(
+                children: [
+                  Expanded(
+                    child: MarqueeText(
+                      _metaLine(track) ??
+                          (stopped ? 'LAST PLAYED' : 'NOW PLAYING'),
+                      style: AppText.caps(12, AppColors.white(0.55)),
+                    ),
+                  ),
+                  if (track != null) ...[
+                    const SizedBox(width: 16),
+                    PlaylistToggleButton(
+                      controller: controller,
+                      compact: false,
+                      onRemove: onRemoveFromPlaylist,
+                    ),
+                  ],
+                ],
               ),
               const SizedBox(height: 10),
               // 2 行ぶんの高さが曲によらず一定になるので、上の Expanded の取り分＝

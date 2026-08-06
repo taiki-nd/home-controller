@@ -92,6 +92,8 @@ class PlaylistSummary {
     required this.ownerName,
     required this.trackCount,
     this.artworkUrl,
+    this.ownerId,
+    this.collaborative = false,
   });
 
   final String id;
@@ -101,8 +103,37 @@ class PlaylistSummary {
   final int trackCount;
   final String? artworkUrl;
 
+  /// 所有者の Spotify user id。`/me/playlists` は他人のプレイリスト（フォロー中）も
+  /// 返すので、曲を足せるかどうかはこれと自分の id を突き合わせて決める。
+  final String? ownerId;
+
+  /// コラボプレイリスト。所有者が他人でも書き込める。
+  final bool collaborative;
+
   /// デザインの `pl.desc`（"You · 42 songs"）に相当する行。
   String get subtitle => '$ownerName · $trackCount songs';
+
+  /// [userId] が曲を足したり消したりできるか。
+  ///
+  /// 自分の id が分からない（[userId] が null）ときは true を返す。
+  /// 出せる導線を勝手に減らすより、Spotify に 403 を返させたほうが正しい。
+  bool isEditableBy(String? userId) {
+    if (collaborative) return true;
+    if (userId == null || ownerId == null) return true;
+    return ownerId == userId;
+  }
+
+  /// 曲数だけ差し替えた写し。追加・削除の直後にリストの "42 songs" を合わせる。
+  PlaylistSummary withTrackCount(int value) => PlaylistSummary(
+    id: id,
+    uri: uri,
+    name: name,
+    ownerName: ownerName,
+    trackCount: value < 0 ? 0 : value,
+    artworkUrl: artworkUrl,
+    ownerId: ownerId,
+    collaborative: collaborative,
+  );
 
   static PlaylistSummary? fromJson(Map<String, dynamic>? json) {
     if (json == null) return null;
@@ -116,6 +147,8 @@ class PlaylistSummary {
       ownerName:
           (json['owner'] as Map<String, dynamic>?)?['display_name'] as String? ??
           'Unknown',
+      ownerId: (json['owner'] as Map<String, dynamic>?)?['id'] as String?,
+      collaborative: json['collaborative'] == true,
       trackCount:
           ((json['tracks'] as Map<String, dynamic>?)?['total'] as num?)
               ?.toInt() ??

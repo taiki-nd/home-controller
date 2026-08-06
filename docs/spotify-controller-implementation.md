@@ -88,7 +88,7 @@ app/lib/
     controller_screen.dart         外枠・背景・オーバーレイの合成
     tablet_layout.dart             iPad 横（左アート + 右レール 452px）
     phone_layout.dart              スマホ（ボトムシート 116px / 78%）
-    widgets/{atoms,transport,panels,overlays}.dart
+    widgets/{atoms,transport,panels,overlays,playlist_button}.dart
 ```
 
 `flutter analyze` クリーン、`flutter test` 21 件パス。
@@ -138,6 +138,29 @@ Spotify Web API はビットレート・ビット深度・サンプルレート�
 **4. サインアウト導線**
 
 デザインに無かったので、帰属表示ピルの長押しに隠した。パーティ中に誤爆させないため。
+
+**5. 再生中の曲のプレイリスト出し入れ（デザインに無い追加）**
+
+now playing に 1 つだけボタンを置いた（iPhone は曲名の右の丸、iPad は
+`NOW PLAYING` 行の右のピル）。**行は増やしていない。**
+
+- 入っている → 確認ダイアログを経て `DELETE /playlists/{id}/tracks`
+- 入っていない → Playlists タブが「追加先を選ぶ」モードに変わり、選んだ行へ
+  `POST /playlists/{id}/tracks`
+
+**「入っているか」は context（再生元）だけで判定している。** Spotify に
+「この曲を含むプレイリスト」を返す API は無く、全リストの中身を舐めると数十
+リクエストになる。0 リクエストで確実に言えるのは再生元だけなので、そこに限った。
+だから「＋」は *どこにも入っていない* ではなく *入れる先を選ぶ* の意味で、
+削除側はラベルに必ずリスト名を出して「そのリストから外す」と言い切っている。
+
+`/me/playlists` は他人のプレイリスト（フォロー中）も返すので、追加先の候補は
+`GET /me` の `id` と突き合わせて自分のもの（+ コラボ）だけに絞る。id が取れなかった
+ときは絞らず、Spotify に 403 を返させる。
+
+**scope を 2 つ増やしている**（`playlist-modify-public` / `playlist-modify-private`）。
+既存ユーザーは再連携するまでこの機能だけが 403 になるので、`ReauthBanner`
+（新譜のときと同じ導線）で案内する。
 
 ---
 
