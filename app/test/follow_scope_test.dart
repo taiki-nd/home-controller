@@ -221,6 +221,36 @@ void main() {
       );
     }
 
+    // **`/tracks` は 2026 年 2 月の移行で廃止され、叩くと 403 が返る。**
+    // 権限の問題と見分けが付かない形で失敗するので、パスをテストで固定する。
+    test('プレイリストの書き込みは /items を叩く（/tracks は廃止）', () async {
+      final adapter = FakeAdapter((_) => _json({'snapshot_id': 's1'}));
+      final dio = Dio(
+        BaseOptions(
+          baseUrl: SpotifyConfig.apiBaseUrl,
+          validateStatus: (_) => true,
+        ),
+      )..httpClientAdapter = adapter;
+      final api = SpotifyApi(signedInAuth(), dio: dio);
+
+      await api.addTrackToPlaylist('p1', 'spotify:track:t1');
+      await api.removeTrackFromPlaylist('p1', 'spotify:track:t1');
+
+      expect(adapter.requests.map((r) => '${r.method} ${r.path}'), [
+        'POST /playlists/p1/items',
+        'DELETE /playlists/p1/items',
+      ]);
+      // body の鍵も同時に変わっている（tracks → items）。
+      expect(adapter.requests.first.data, {
+        'uris': ['spotify:track:t1'],
+      });
+      expect(adapter.requests.last.data, {
+        'items': [
+          {'uri': 'spotify:track:t1'},
+        ],
+      });
+    });
+
     test('書き込みの scope が無い状態の Forbidden は再連携として扱う', () async {
       final api = playlistApi(hasWriteScope: false);
 

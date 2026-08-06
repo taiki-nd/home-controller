@@ -170,6 +170,26 @@ void main() {
     test('null 要素を弾く', () {
       expect(PlaylistSummary.fromJson(null), isNull);
     });
+
+    // 2026 年 2 月の移行で `tracks` → `items`。古い鍵しか見ていないと
+    // 曲数が全部 0 曲になる（＝移行漏れの目印）。
+    test('曲数は items.total から読む（tracks.total も読めるまま）', () {
+      final migrated = PlaylistSummary.fromJson({
+        'id': 'p1',
+        'uri': 'spotify:playlist:p1',
+        'name': 'fav_0_pops_rock',
+        'owner': {'display_name': 'nadai', 'id': 'nadai'},
+        'items': {'total': 12},
+      });
+      expect(migrated!.trackCount, 12);
+      expect(migrated.ownerId, 'nadai');
+
+      final legacy = PlaylistSummary.fromJson({
+        'uri': 'spotify:playlist:p2',
+        'tracks': {'total': 7},
+      });
+      expect(legacy!.trackCount, 7);
+    });
   });
 
   group('SpotifyDevice', () {

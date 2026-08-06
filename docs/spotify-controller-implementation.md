@@ -191,7 +191,28 @@ scope なら token レスポンスの `scope` を省略してよいので、実�
 <https://www.spotify.com/account/apps/> でアプリの連携を解除してからログインし直す
 こと（承認済みの記録ごと消える）。
 
-#### 踏んだ罠 2: 権限があっても書き換えられないプレイリストがある
+#### 踏んだ罠 2（**これが本当の原因だった**）: `/tracks` は廃止されている
+
+**`POST/DELETE /playlists/{id}/tracks` は 2026 年 2 月の移行で廃止され、叩くと
+権限が揃っていても素の `403 Forbidden` が返る**（[Web API Changelog - February
+2026](https://developer.spotify.com/documentation/web-api/references/changes/february-2026)）。
+正しいパスは `/playlists/{id}/items` で、**削除の body の鍵も `tracks` → `items`**
+に変わっている。
+
+- 追加: `POST /playlists/{id}/items` — body は `{"uris": [...]}`（変わらず）
+- 削除: `DELETE /playlists/{id}/items` — body は `{"items": [{"uri": ...}]}`
+
+同じ移行で **プレイリストの `tracks` フィールドが `items` に改名**されている。
+`/me/playlists` の曲数を `tracks.total` から読んでいると**全部 0 曲に見える**。
+これが移行漏れの分かりやすい目印なので、曲数が一律 0 になったら真っ先にここを疑う。
+
+（同時に消えたもので、このアプリに関係するのは `GET /browse/new-releases` と
+`GET /search` の limit 上限 50 → 10。どちらも既に対応済み。）
+
+原因が権限側に見えたのは、**403 の文面が `Forbidden` だけで理由を言わない**ため。
+「権限は実測で付いている」まで詰めて初めて、権限ではないと言い切れた。
+
+#### 踏んだ罠 3: 権限があっても書き換えられないプレイリストがある
 
 権限を実測で確認したうえで、なお `Forbidden` が出た。原因は scope ではなく対象で、
 **`/me/playlists` には書き換えられないものが混ざる**:

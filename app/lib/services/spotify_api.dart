@@ -315,12 +315,17 @@ class SpotifyApi {
   /// プレイリストの末尾に 1 曲足す。要 `playlist-modify-public` /
   /// `playlist-modify-private`。
   ///
+  /// **パスは `/items`。`/tracks` は 2026 年 2 月の移行で廃止された**
+  /// （Web API Changelog - February 2026）。古いパスを叩くと、権限が揃っていても
+  /// 素の `403 Forbidden` が返る。文面に理由が出ないので、当たると原因を追うのに
+  /// 時間が掛かる。
+  ///
   /// **重複はチェックされない。** 同じ曲を 2 回足せば 2 行入る。手前で
   /// 「もう入っているか」を知る API は無いので、呼ぶ側で押させ過ぎない。
   Future<void> addTrackToPlaylist(String playlistId, String trackUri) {
     return _send(
       'POST',
-      '/playlists/$playlistId/tracks',
+      '/playlists/$playlistId/items',
       body: {
         'uris': [trackUri],
       },
@@ -329,12 +334,15 @@ class SpotifyApi {
 
   /// プレイリストからその曲を消す。位置を指定しないので、**同じ曲が複数入って
   /// いれば全部消える**（Spotify の仕様）。
+  ///
+  /// パスが `/items` になったのと同時に、**body の鍵も `tracks` → `items`** に
+  /// 変わっている（[addTrackToPlaylist] のコメント参照）。
   Future<void> removeTrackFromPlaylist(String playlistId, String trackUri) {
     return _send(
       'DELETE',
-      '/playlists/$playlistId/tracks',
+      '/playlists/$playlistId/items',
       body: {
-        'tracks': [
+        'items': [
           {'uri': trackUri},
         ],
       },

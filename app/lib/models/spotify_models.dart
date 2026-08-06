@@ -113,6 +113,10 @@ class PlaylistSummary {
   /// デザインの `pl.desc`（"You · 42 songs"）に相当する行。
   String get subtitle => '$ownerName · $trackCount songs';
 
+  static int? _totalOf(Object? block) => block is Map<String, dynamic>
+      ? (block['total'] as num?)?.toInt()
+      : null;
+
   /// Spotify 自身が作るプレイリストの所有者 id。
   ///
   /// Discover Weekly / Daily Mix / Release Radar / Blend などがこれ。
@@ -157,10 +161,10 @@ class PlaylistSummary {
           'Unknown',
       ownerId: (json['owner'] as Map<String, dynamic>?)?['id'] as String?,
       collaborative: json['collaborative'] == true,
-      trackCount:
-          ((json['tracks'] as Map<String, dynamic>?)?['total'] as num?)
-              ?.toInt() ??
-          0,
+      // 2026 年 2 月の移行で `tracks` → `items` に改名された。古い鍵しか見て
+      // いないと、**曲数が全部 0 曲に見える**（それが移行漏れの目印になる）。
+      // 移行前の応答も読めるように両方見る。
+      trackCount: _totalOf(json['items']) ?? _totalOf(json['tracks']) ?? 0,
       artworkUrl: SpotifyImage.pick(
         json['images'] as List<dynamic>?,
         minWidth: 160,
