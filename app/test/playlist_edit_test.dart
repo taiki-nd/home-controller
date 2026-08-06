@@ -301,9 +301,32 @@ void main() {
 
       await controller.removeFromPlaylist(_mine, _track);
 
-      expect(controller.errorBanner, contains('編集できません'));
+      expect(controller.errorBanner, isNotNull);
       expect(controller.currentTrackPlaylist, isNull);
       expect(controller.editablePlaylists.map((p) => p.id), ['p2']);
+    });
+
+    // 「自分が作ったのに編集できない」の実際の中身は、たいていログイン中の
+    // アカウントが所有者ではないこと。突き合わせた結果を文面に出す。
+    test('所有者が別アカウントなら、その id を並べて名指しする', () async {
+      final api = _FakeApi(forbid: const {'p3'});
+      final controller = await _boot(api);
+
+      await controller.addToPlaylist(_someoneElses, _track);
+
+      expect(controller.errorBanner, contains('other'));
+      expect(controller.errorBanner, contains('me'));
+      expect(controller.errorBanner, contains('フォローしているだけ'));
+    });
+
+    test('所有者も権限も揃っているのに拒否されたら、手元の問題ではないと言う', () async {
+      final api = _FakeApi(forbid: const {'p1'});
+      final controller = await _boot(api);
+
+      await controller.addToPlaylist(_mine, _track);
+
+      expect(controller.errorBanner, contains('Spotify が拒否'));
+      expect(controller.errorBanner, isNot(contains('フォローしているだけ')));
     });
   });
 

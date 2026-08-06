@@ -782,11 +782,11 @@ class PlayerController extends ChangeNotifier {
   }
 
   /// 書き込み系の共通ハンドリング。成功したら true。
-  /// [onApiError] は失敗の内容から手元の状態を直したいときに使う
-  /// （バナーを出す前に呼ぶ）。
+  /// [onApiError] は失敗の内容から手元の状態を直したいときに使う。
+  /// 文字列を返すとバナーの文面をそれに差し替える（null なら API の文面のまま）。
   Future<bool> _guard(
     Future<void> Function() action, {
-    void Function(SpotifyApiException e)? onApiError,
+    String? Function(SpotifyApiException e)? onApiError,
   }) async {
     try {
       await action();
@@ -800,8 +800,7 @@ class PlayerController extends ChangeNotifier {
     } on SpotifyAuthExpiredException {
       return false;
     } on SpotifyApiException catch (e) {
-      onApiError?.call(e);
-      _errorBanner = e.message;
+      _errorBanner = onApiError?.call(e) ?? e.message;
       notifyListeners();
       return false;
     }
@@ -896,10 +895,31 @@ class PlayerController extends ChangeNotifier {
       !_readOnlyPlaylistIds.contains(playlist.id) &&
       playlist.isEditableBy(_userId);
 
-  /// 拒否された＝このリストは編集できない。次からは出さない。
-  void _markReadOnly(PlaylistSummary playlist, SpotifyApiException e) {
-    if (e.statusCode != 403) return;
+  /// 拒否された＝このリストは編集できない。次からは出さないようにし、
+  /// **分かる範囲で理由を名指しする**。
+  ///
+  /// 「自分が作ったのに編集できない」の実際の中身は、たいてい
+  /// **ログイン中のアカウントが所有者ではない**（別アカウントで作ったものを
+  /// フォローしている）。所有者と自分の id を並べて出せば、それが一目で分かる。
+  String? _markReadOnly(PlaylistSummary playlist, SpotifyApiException e) {
+    if (e.statusCode != 403) return null;
     _readOnlyPlaylistIds.add(playlist.id);
+
+    final owner = playlist.ownerId;
+    final me = _userId;
+    debugPrint(
+      'playlist write forbidden: id=${playlist.id} owner=$owner me=$me '
+      'missingScopes=${_api.missingScopes}',
+    );
+    if (owner == null || me == null) return null; // 既定の文面に任せる
+    if (owner != me) {
+      return '「${playlist.name}」の所有者は ${playlist.ownerName}（$owner）で、'
+          'ログイン中のアカウント（$me）ではありません。'
+          'フォローしているだけのリストは編集できません。';
+    }
+    // 所有者も権限も揃っているのに拒否された。ここまで来たら手元の問題ではない。
+    return '「${playlist.name}」は自分の所有（$me）で書き込み権限もありますが、'
+        'Spotify が拒否しました（403）。Spotify 側の状態を確認してください。';
   }
 
   /// 曲を足せるプレイリストだけ。他人のリスト（フォロー中）を落とす。
