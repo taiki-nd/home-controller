@@ -52,6 +52,10 @@ class SpotifyConfig {
     // 両方要る（どちらか欠けると、そちら側のリストだけ 403 になる）。
     'playlist-modify-public',
     'playlist-modify-private',
+    // `GET /me` の id。**追加先の候補から他人のリストを落とすのに要る**
+    // （`/me/playlists` はフォロー中のものも返す）。これが無いと /me が
+    // 403 になり、書き込めないリストを候補に出してしまう。
+    'user-read-private',
   ];
 
   static bool get isConfigured => clientId.isNotEmpty;

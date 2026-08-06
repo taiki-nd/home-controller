@@ -51,11 +51,22 @@ const _someoneElses = PlaylistSummary(
   trackCount: 120,
 );
 
+/// Spotify 製（Discover Weekly 等）。ライブラリに並ぶが誰も書き換えられない。
+const _madeForYou = PlaylistSummary(
+  id: 'dw',
+  uri: 'spotify:playlist:dw',
+  name: 'Discover Weekly',
+  ownerName: 'Spotify',
+  ownerId: PlaylistSummary.spotifyOwnerId,
+  trackCount: 30,
+);
+
 class _FakeApi extends SpotifyApi {
   _FakeApi({
     this.contextUri = 'spotify:playlist:p1',
     this.userId = 'me',
     this.missing = const {},
+    this.forbid = const {},
   }) : super(AuthService());
 
   final String? contextUri;
@@ -63,6 +74,9 @@ class _FakeApi extends SpotifyApi {
 
   /// トークンに足りない scope。既定は「揃っている」。
   final Set<String> missing;
+
+  /// 書き込むと 403 を返すプレイリスト id（Spotify 側が拒否する状況の再現）。
+  final Set<String> forbid;
 
   @override
   Set<String> get missingScopes => missing;
@@ -108,13 +122,21 @@ class _FakeApi extends SpotifyApi {
     _mine,
     _alsoMine,
     _someoneElses,
+    _madeForYou,
   ];
 
   @override
   Future<String?> currentUserId() async => userId;
 
+  /// Spotify が拒否する状況。文面は本物と同じく素の Forbidden 由来のもの。
+  void _rejectIfForbidden(String playlistId) {
+    if (!forbid.contains(playlistId)) return;
+    throw SpotifyApiException('このプレイリストは編集できません。', statusCode: 403);
+  }
+
   @override
   Future<void> addTrackToPlaylist(String playlistId, String trackUri) async {
+    _rejectIfForbidden(playlistId);
     writes.add('add:$playlistId:$trackUri');
   }
 
@@ -123,6 +145,7 @@ class _FakeApi extends SpotifyApi {
     String playlistId,
     String trackUri,
   ) async {
+    _rejectIfForbidden(playlistId);
     writes.add('remove:$playlistId:$trackUri');
   }
 }
@@ -217,7 +240,8 @@ void main() {
   test('追加先の候補は編集できるリストだけ', () async {
     final controller = await _boot(_FakeApi());
     expect(controller.editablePlaylists.map((p) => p.id), ['p1', 'p2']);
-    expect(controller.readOnlyPlaylistCount, 1);
+    // 他人のもの（p3）と Spotify 製（dw）の 2 件。
+    expect(controller.readOnlyPlaylistCount, 2);
   });
 
   test('削除すると API を叩き、手元の曲数も減る', () async {
@@ -242,6 +266,45 @@ void main() {
     expect(api.writes, ['add:p2:spotify:track:cur']);
     expect(controller.addingTrack, isNull, reason: '選び終わったらモードは畳む');
     expect(controller.playlists.firstWhere((p) => p.id == 'p2').trackCount, 43);
+  });
+
+  group('編集できないリストは出さない', () {
+    // Discover Weekly / Daily Mix / Blend などは自分のライブラリに並ぶが、
+    // 誰も中身を書き換えられない。自分の id が取れていなくてもこれは分かる。
+    test('Spotify 製のリストは、自分の id が取れていなくても候補から落とす', () async {
+      const madeForYou = PlaylistSummary(
+        id: 'dw',
+        uri: 'spotify:playlist:dw',
+        name: 'Discover Weekly',
+        ownerName: 'Spotify',
+        ownerId: PlaylistSummary.spotifyOwnerId,
+        trackCount: 30,
+      );
+
+      expect(madeForYou.isEditableBy(null), isFalse);
+      expect(madeForYou.isEditableBy('me'), isFalse);
+    });
+
+    test('Spotify 製のリストを流していても削除の導線を出さない', () async {
+      final controller = await _boot(
+        _FakeApi(contextUri: 'spotify:playlist:dw', userId: null),
+      );
+      expect(controller.currentTrackPlaylist, isNull);
+    });
+
+    // /me/playlists は「書き換えられるか」を返してくれない。所有者で弾いても
+    // 取りこぼす（他人のリストは id が無いと分からない）ので、403 を実測として覚える。
+    test('403 を食らったリストは、次から候補にも ✓ にも出さない', () async {
+      final api = _FakeApi(forbid: const {'p1'});
+      final controller = await _boot(api);
+      expect(controller.currentTrackPlaylist?.id, 'p1', reason: '拒否される前は出る');
+
+      await controller.removeFromPlaylist(_mine, _track);
+
+      expect(controller.errorBanner, contains('編集できません'));
+      expect(controller.currentTrackPlaylist, isNull);
+      expect(controller.editablePlaylists.map((p) => p.id), ['p2']);
+    });
   });
 
   group('scope が足りないときは叩かずに理由を出す', () {

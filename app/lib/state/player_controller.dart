@@ -782,7 +782,12 @@ class PlayerController extends ChangeNotifier {
   }
 
   /// 書き込み系の共通ハンドリング。成功したら true。
-  Future<bool> _guard(Future<void> Function() action) async {
+  /// [onApiError] は失敗の内容から手元の状態を直したいときに使う
+  /// （バナーを出す前に呼ぶ）。
+  Future<bool> _guard(
+    Future<void> Function() action, {
+    void Function(SpotifyApiException e)? onApiError,
+  }) async {
     try {
       await action();
       _errorBanner = null;
@@ -795,6 +800,7 @@ class PlayerController extends ChangeNotifier {
     } on SpotifyAuthExpiredException {
       return false;
     } on SpotifyApiException catch (e) {
+      onApiError?.call(e);
       _errorBanner = e.message;
       notifyListeners();
       return false;
@@ -864,7 +870,10 @@ class PlayerController extends ChangeNotifier {
   }
 
   /// 自分の Spotify user id。プレイリストを編集できるかの判定だけに使う。
-  /// 取れなければ null のまま（全リストを編集可として扱う）。
+  ///
+  /// 取れなければ null のまま。そのときは所有者で候補を絞れないので、他人の
+  /// リストが候補に混ざる（`user-read-private` が無いと `GET /me` は 403）。
+  /// 混ざったものは書き込みの 403 を実測して落とす（[_markReadOnly]）。
   Future<void> _loadUserId() async {
     try {
       final id = await _api.currentUserId();
@@ -872,11 +881,26 @@ class PlayerController extends ChangeNotifier {
       _userId = id;
       notifyListeners();
     } on SpotifyApiException catch (e) {
-      debugPrint('currentUserId failed: $e');
+      // 黙って落ちると「なぜか他人のリストが出る」の原因が追えない。
+      debugPrint('currentUserId failed（所有者で候補を絞れない）: $e');
     }
   }
 
-  bool canEdit(PlaylistSummary playlist) => playlist.isEditableBy(_userId);
+  /// 書き込もうとして 403 を食らったリスト。
+  ///
+  /// `/me/playlists` は「書き換えられるか」を返してくれない。所有者で弾いても
+  /// 取りこぼしはあるので、**拒否されたという実測**を覚えて候補から外す。
+  final Set<String> _readOnlyPlaylistIds = {};
+
+  bool canEdit(PlaylistSummary playlist) =>
+      !_readOnlyPlaylistIds.contains(playlist.id) &&
+      playlist.isEditableBy(_userId);
+
+  /// 拒否された＝このリストは編集できない。次からは出さない。
+  void _markReadOnly(PlaylistSummary playlist, SpotifyApiException e) {
+    if (e.statusCode != 403) return;
+    _readOnlyPlaylistIds.add(playlist.id);
+  }
 
   /// 曲を足せるプレイリストだけ。他人のリスト（フォロー中）を落とす。
   List<PlaylistSummary> get editablePlaylists =>
@@ -945,6 +969,7 @@ class PlayerController extends ChangeNotifier {
     notifyListeners();
     final ok = await _guard(
       () => _api.addTrackToPlaylist(playlist.id, track.uri),
+      onApiError: (e) => _markReadOnly(playlist, e),
     );
     if (!ok) return;
     _bumpTrackCount(playlist, 1);
@@ -956,6 +981,7 @@ class PlayerController extends ChangeNotifier {
     if (_blockedByMissingScope()) return;
     final ok = await _guard(
       () => _api.removeTrackFromPlaylist(playlist.id, track.uri),
+      onApiError: (e) => _markReadOnly(playlist, e),
     );
     if (!ok) return;
     _bumpTrackCount(playlist, -1);

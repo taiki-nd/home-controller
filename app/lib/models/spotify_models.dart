@@ -113,11 +113,19 @@ class PlaylistSummary {
   /// デザインの `pl.desc`（"You · 42 songs"）に相当する行。
   String get subtitle => '$ownerName · $trackCount songs';
 
+  /// Spotify 自身が作るプレイリストの所有者 id。
+  ///
+  /// Discover Weekly / Daily Mix / Release Radar / Blend などがこれ。
+  /// **本人のライブラリに並ぶが、誰も中身を書き換えられない**（403 Forbidden）。
+  static const spotifyOwnerId = 'spotify';
+
   /// [userId] が曲を足したり消したりできるか。
   ///
   /// 自分の id が分からない（[userId] が null）ときは true を返す。
   /// 出せる導線を勝手に減らすより、Spotify に 403 を返させたほうが正しい。
+  /// ただし Spotify 製だけは id が分からなくても確実に書けないので落とす。
   bool isEditableBy(String? userId) {
+    if (ownerId == spotifyOwnerId) return false;
     if (collaborative) return true;
     if (userId == null || ownerId == null) return true;
     return ownerId == userId;

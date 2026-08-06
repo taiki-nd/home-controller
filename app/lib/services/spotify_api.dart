@@ -443,10 +443,11 @@ class SpotifyApi {
           }
           // Spotify が「書き込み権限あり」と返したトークンで拒否された。
           // ここまで来たら scope の話ではないので、再連携を勧めてはいけない。
+          // **非公開かどうかは関係ない**（非公開でも自分のリストなら書ける）。
           throw SpotifyApiException(
-            'プレイリストを変更できませんでした（Spotify: ${message ?? 'Forbidden'}）。'
-            '書き込み権限は付いています（Spotify 確認済み）。'
-            'リストの所有者と公開設定を確認してください。',
+            'このプレイリストは編集できません。'
+            'Spotify が作ったリスト（Discover Weekly・Daily Mix・Blend など）と'
+            '他人のリストは、権限があっても書き換えられません。',
             statusCode: 403,
           );
         }

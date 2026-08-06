@@ -258,7 +258,9 @@ void main() {
                 'scope 例外ではない',
                 isFalse,
               )
-              .having((e) => e.message, '文面', contains('Forbidden')),
+              // 非公開かどうかの話ではないので、そこへ誘導しない。
+              .having((e) => e.message, '文面', contains('編集できません'))
+              .having((e) => e.message, '再連携を勧めない', isNot(contains('再連携'))),
         ),
       );
       // 控えは実測なので落とさない（何度再連携させても直らないため）。
