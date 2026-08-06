@@ -118,14 +118,14 @@ class AuthService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// [forceConsent] を立てると同意画面を必ず通す。
+  /// **同意画面は必ず通す（`show_dialog=true`）。**
   ///
-  /// **scope を足したあとの取り直しでは必ず立てること。** Spotify は既に承認済みの
-  /// アプリだと同意画面を飛ばし、追加した scope を無視して**以前承認した範囲の
-  /// トークンを返す**ことがある。そうなると「サインアウトして入り直したのに 403」
-  /// になり、しかも要求 scope しか控えていないと手元では気づけない。
-  /// `show_dialog=true` で必ず承認を通せば、要求した scope が入って返ってくる。
-  Future<bool> signIn({bool forceConsent = false}) async {
+  /// Spotify は既に承認済みのアプリだと同意画面を飛ばし、追加した scope を無視して
+  /// **以前承認した範囲のトークンを返す**ことがある。そうなると「サインアウトして
+  /// 入り直したのに 403」になり、しかも要求 scope しか控えていないと手元では
+  /// 気づけない。初回ログインではどうせ同意画面が出るので、常に通しても
+  /// 手数は増えない。
+  Future<bool> signIn() async {
     if (!SpotifyConfig.isConfigured) {
       _error = 'SPOTIFY_CLIENT_ID が設定されていません';
       notifyListeners();
@@ -144,9 +144,7 @@ class AuthService extends ChangeNotifier {
               SpotifyConfig.redirectUri,
               serviceConfiguration: _serviceConfiguration,
               scopes: SpotifyConfig.scopes,
-              additionalParameters: forceConsent
-                  ? const {'show_dialog': 'true'}
-                  : null,
+              additionalParameters: const {'show_dialog': 'true'},
             ),
           )
           .timeout(_authorizeTimeout);
@@ -181,8 +179,8 @@ class AuthService extends ChangeNotifier {
   /// 挟まない（トークンは [_persist] が上書きする）。
   ///
   /// 中身は [signIn] と同じだが、呼び出し側の意図が「ログイン」ではなく
-  /// 「権限の追加」なので名前を分けている。同意画面は必ず通す。
-  Future<bool> reauthorize() => signIn(forceConsent: true);
+  /// 「権限の追加」なので名前を分けている。
+  Future<bool> reauthorize() => signIn();
 
   Future<void> signOut() async {
     _accessToken = null;

@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:spotify_remote/main.dart';
 import 'package:spotify_remote/main_mock.dart';
+import 'package:spotify_remote/models/spotify_models.dart';
 import 'package:spotify_remote/services/app_flags.dart';
+import 'package:spotify_remote/services/auth_service.dart';
+import 'package:spotify_remote/services/spotify_api.dart';
 import 'package:spotify_remote/state/home_controller.dart';
 import 'package:spotify_remote/state/music_section.dart';
 import 'package:spotify_remote/theme/tokens.dart';
@@ -18,6 +21,49 @@ import 'home_controller_test.dart' show ScriptedSocket, controllerFor;
 
 /// iPad 横（デザインは 1194x834）。
 const _ipad = Size(1194, 834);
+
+/// 常にサインイン済みの AuthService。再連携が呼ばれたかだけ見る。
+class _SignedInAuth extends AuthService {
+  bool reauthorized = false;
+
+  @override
+  bool get isRestored => true;
+
+  @override
+  bool get isSignedIn => true;
+
+  @override
+  bool get needsReauthorization => false;
+
+  @override
+  Future<void> restore() async {}
+
+  @override
+  Future<bool> reauthorize() async {
+    reauthorized = true;
+    return true;
+  }
+}
+
+/// 何も鳴っていない Spotify。Drawer を見るだけなので中身は空で足りる。
+class _IdleApi extends SpotifyApi {
+  _IdleApi(super.auth);
+
+  @override
+  Future<PlaybackState> playbackState() async => PlaybackState.stopped;
+
+  @override
+  Future<QueueSnapshot> queue() async => QueueSnapshot.empty;
+
+  @override
+  Future<List<SpotifyDevice>> devices() async => const [];
+
+  @override
+  Future<List<PlaylistSummary>> playlists({int limit = 50}) async => const [];
+
+  @override
+  Future<String?> currentUserId() async => null;
+}
 
 Future<void> setSurface(WidgetTester tester, Size size) async {
   tester.view.physicalSize = size;
@@ -161,7 +207,7 @@ void main() {
     testWidgets('music を持たないビルドでは Drawer に MUSIC が出ない', (tester) async {
       await setSurface(tester, _ipad);
       final controller = HomeController(credentials: FakeHaCredentials());
-  
+
       await tester.pumpWidget(
         MaterialApp(
           theme: buildAppTheme(),
@@ -178,6 +224,45 @@ void main() {
       // music が無いので IndexedStack ごと作らない。
       expect(find.byType(IndexedStack), findsNothing);
       controller.dispose();
+    });
+
+    // 帯（ReauthBanner）は「控えた scope が足りない」と分かっているときしか
+    // 出ない。控えが実態より広いと出る手が無くなるので、Drawer の行が最後の
+    // 頼りになる。状態に関わらず常にあることを固定する。
+    testWidgets('サインイン済みなら Drawer に再連携の導線が常にある', (tester) async {
+      await setSurface(tester, _ipad);
+      mockSecureStorage();
+      final home = HomeController(credentials: FakeHaCredentials());
+      final auth = _SignedInAuth();
+      final music = MusicSection(auth: auth, api: _IdleApi(auth));
+      addTearDown(music.dispose);
+      addTearDown(home.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildAppTheme(),
+          home: AppShell(home: home, music: music),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+      // サインイン済みなので PlayerController がポーリングを仕込む。
+      // ここで見たいのは Drawer だけなので、タイマーを残さないよう止める。
+      music.player?.setForeground(false);
+
+      tester.state<ScaffoldState>(find.byType(Scaffold).first).openDrawer();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      final row = find.descendant(
+        of: find.byType(Drawer),
+        matching: find.text('SPOTIFY と再連携'),
+      );
+      expect(row, findsOneWidget);
+      expect(auth.needsReauthorization, isFalse, reason: '帯が出ない状態でも出す');
+
+      await tester.tap(row);
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(auth.reauthorized, isTrue);
     });
 
     testWidgets('home で無操作が続くと music に戻る（焼きつき対策）', (tester) async {

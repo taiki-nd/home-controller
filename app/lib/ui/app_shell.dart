@@ -192,6 +192,23 @@ class _ShellDrawer extends StatelessWidget {
                   selected: false,
                   onTap: onOpenSetup,
                 ),
+                // scope を足したときの取り直し口。**常に出しておく。**
+                // 帯（ReauthBanner）は「控えた scope が足りない」と分かって
+                // いるときしか出ないので、控えが実態より広いと出る手が無くなる。
+                // ここが最後の頼りなので、状態に関わらず置いておく。
+                if (music != null && music.isSignedIn)
+                  _ModeRow(
+                    icon: Icons.link_rounded,
+                    label: 'SPOTIFY と再連携',
+                    subtitle: music.auth.needsReauthorization
+                        ? '権限が足りません'
+                        : '権限を取り直す',
+                    selected: false,
+                    onTap: () {
+                      Navigator.of(context).pop();
+                      music.auth.reauthorize();
+                    },
+                  ),
               ],
             );
           },

@@ -930,7 +930,9 @@ class PlayerController extends ChangeNotifier {
   bool _blockedByMissingScope() {
     const writeScopes = {'playlist-modify-public', 'playlist-modify-private'};
     if (!_api.missingScopes.any(writeScopes.contains)) return false;
-    _errorBanner = 'プレイリストの変更には Spotify との再連携が必要です';
+    // どこを押せばいいのかまで書く。バナー（ReauthBanner）は控えの scope が
+    // 足りないと分かっているときしか出ないので、そこに頼らせない。
+    _errorBanner = 'プレイリストの変更には Spotify との再連携が必要です（☰ → SPOTIFY と再連携）';
     notifyListeners();
     return true;
   }
@@ -950,10 +952,7 @@ class PlayerController extends ChangeNotifier {
     _refreshQueueIfContext(playlist);
   }
 
-  Future<void> removeFromPlaylist(
-    PlaylistSummary playlist,
-    Track track,
-  ) async {
+  Future<void> removeFromPlaylist(PlaylistSummary playlist, Track track) async {
     if (_blockedByMissingScope()) return;
     final ok = await _guard(
       () => _api.removeTrackFromPlaylist(playlist.id, track.uri),

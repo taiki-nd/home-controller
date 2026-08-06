@@ -49,7 +49,7 @@ class SpotifyAuthExpiredException extends SpotifyApiException {
 /// [AuthService.needsReauthorization] の役目で、こちらは取りこぼしの受け皿。
 class SpotifyScopeException extends SpotifyApiException {
   SpotifyScopeException()
-    : super('Spotify との再連携が必要です（権限が足りません）', statusCode: 403);
+    : super('Spotify との再連携が必要です（☰ → SPOTIFY と再連携）', statusCode: 403);
 }
 
 /// Spotify Web API クライアント。
