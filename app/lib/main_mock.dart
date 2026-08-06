@@ -266,7 +266,7 @@ class _MockAuth extends AuthService {
   Future<void> restore() async {}
 
   @override
-  Future<bool> signIn() async {
+  Future<bool> signIn({bool forceConsent = false}) async {
     _busy = true;
     notifyListeners();
     await Future<void>.delayed(const Duration(milliseconds: 700));

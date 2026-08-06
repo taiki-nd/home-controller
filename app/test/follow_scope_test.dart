@@ -186,6 +186,58 @@ void main() {
       );
     });
 
+    // /playlists/* の書き込みは、scope が足りなくても素の "Forbidden" しか
+    // 返ってこない。文面では切り分けられないので、控えの scope で判断する。
+    SpotifyApi playlistApi({required bool hasWriteScope}) {
+      final dio =
+          Dio(
+              BaseOptions(
+                baseUrl: SpotifyConfig.apiBaseUrl,
+                validateStatus: (_) => true,
+              ),
+            )
+            ..httpClientAdapter = FakeAdapter(
+              (_) => _json({
+                'error': {'status': 403, 'message': 'Forbidden'},
+              }, status: 403),
+            );
+      final granted = hasWriteScope
+          ? SpotifyConfig.scopes
+          : SpotifyConfig.scopes
+                .where((s) => !s.startsWith('playlist-modify'))
+                .toList();
+      return SpotifyApi(
+        signedInAuth(extra: {'spotify_granted_scopes': granted.join(' ')}),
+        dio: dio,
+      );
+    }
+
+    test('書き込みの scope が無い状態の Forbidden は再連携として扱う', () async {
+      final api = playlistApi(hasWriteScope: false);
+
+      await expectLater(
+        api.addTrackToPlaylist('p1', 'spotify:track:t1'),
+        throwsA(isA<SpotifyScopeException>()),
+      );
+    });
+
+    test('scope が揃っているなら Forbidden はそのまま伝える（再連携の案内つき）', () async {
+      final api = playlistApi(hasWriteScope: true);
+
+      await expectLater(
+        api.removeTrackFromPlaylist('p1', 'spotify:track:t1'),
+        throwsA(
+          isA<SpotifyApiException>()
+              .having(
+                (e) => e is SpotifyScopeException,
+                'scope 例外ではない',
+                isFalse,
+              )
+              .having((e) => e.message, '文面', contains('Forbidden')),
+        ),
+      );
+    });
+
     test('Premium 由来の 403 は素通しする', () async {
       final api = apiWith(
         FakeAdapter(

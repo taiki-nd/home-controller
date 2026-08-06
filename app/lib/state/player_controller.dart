@@ -922,7 +922,22 @@ class PlayerController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// プレイリストを書き換える scope を持っていないなら、叩かずに理由を出す。
+  ///
+  /// `/playlists/*` の 403 は Spotify が素の "Forbidden" しか返さないので、
+  /// そのまま出すと何をすればいいのか分からない。手元で足りないと分かっている
+  /// ぶんは、リクエストを使わずにここで言い切る。
+  bool _blockedByMissingScope() {
+    const writeScopes = {'playlist-modify-public', 'playlist-modify-private'};
+    if (!_api.missingScopes.any(writeScopes.contains)) return false;
+    _errorBanner = 'プレイリストの変更には Spotify との再連携が必要です';
+    notifyListeners();
+    return true;
+  }
+
   Future<void> addToPlaylist(PlaylistSummary playlist, Track track) async {
+    // 選び直しからやらせたいので、弾くのは選択を畳む前。
+    if (_blockedByMissingScope()) return;
     // 選択は押した時点で終わり。失敗しても選び直しからやらせる。
     _addingTrack = null;
     notifyListeners();
@@ -939,6 +954,7 @@ class PlayerController extends ChangeNotifier {
     PlaylistSummary playlist,
     Track track,
   ) async {
+    if (_blockedByMissingScope()) return;
     final ok = await _guard(
       () => _api.removeTrackFromPlaylist(playlist.id, track.uri),
     );

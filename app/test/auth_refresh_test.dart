@@ -2,6 +2,7 @@ import 'package:flutter_appauth/flutter_appauth.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:spotify_remote/services/auth_service.dart';
+import 'package:spotify_remote/services/spotify_config.dart';
 
 /// 圏外での起動でトークンを捨ててしまうと再ログインを強いることになる。
 /// 「捨てるのは認可サーバーが拒否したときだけ」をここで固定する。
@@ -75,6 +76,28 @@ class FailingAppAuth implements FlutterAppAuth {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+/// token() が成功する AppAuth。返す scope を差し替えられる。
+class _RefreshingAppAuth implements FlutterAppAuth {
+  _RefreshingAppAuth({this.scopes});
+
+  /// トークンに実際に付いた scope。null なら「返ってこなかった」。
+  final List<String>? scopes;
+
+  @override
+  Future<TokenResponse> token(TokenRequest request) async => TokenResponse(
+    'at-2',
+    'rt-2',
+    DateTime.now().add(const Duration(hours: 1)),
+    null,
+    'Bearer',
+    scopes,
+    null,
+  );
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 AuthService buildSignedIn(FlutterAppAuth appAuth, Map<String, String> values) {
   return AuthService(storage: FakeStorage(values), appAuth: appAuth);
 }
@@ -109,5 +132,49 @@ void main() {
     expect(await auth.accessToken(), isNull);
     expect(auth.isSignedIn, isFalse);
     expect(values.containsKey('spotify_refresh_token'), isFalse);
+  });
+
+  // 控えが実態より広いと「バナーは出ないのに 403」になる。Spotify は既に承認
+  // 済みのアプリだと同意画面を飛ばし、古い scope のトークンを返すことがあるので、
+  // 要求 scope をそのまま控えていると気づけない。
+  group('scope の控えは実際に付いたものに合わせる', () {
+    test('リフレッシュで狭い scope が返れば、再連携が必要だと分かる', () async {
+      final values = storedTokens()
+        // 全部持っているつもりで控えてある状態（前のバージョンの控え方）。
+        ..['spotify_granted_scopes'] = SpotifyConfig.scopes.join(' ');
+      final auth = buildSignedIn(
+        // 実際のトークンにはプレイリストの書き込みが付いていない。
+        _RefreshingAppAuth(
+          scopes: SpotifyConfig.scopes
+              .where((s) => !s.startsWith('playlist-modify'))
+              .toList(),
+        ),
+        values,
+      );
+
+      expect(auth.needsReauthorization, isFalse, reason: '読み戻した時点では控えどおり');
+      await auth.accessToken();
+
+      expect(auth.missingScopes, {
+        'playlist-modify-public',
+        'playlist-modify-private',
+      });
+      expect(auth.needsReauthorization, isTrue);
+      expect(
+        values['spotify_granted_scopes'],
+        isNot(contains('playlist-modify')),
+      );
+    });
+
+    test('scope が返ってこなければ控えを消さない', () async {
+      final values = storedTokens()
+        ..['spotify_granted_scopes'] = SpotifyConfig.scopes.join(' ');
+      final auth = buildSignedIn(_RefreshingAppAuth(), values);
+
+      await auth.accessToken();
+
+      expect(auth.missingScopes, isEmpty);
+      expect(values['spotify_granted_scopes'], SpotifyConfig.scopes.join(' '));
+    });
   });
 }

@@ -83,6 +83,19 @@ class SpotifyApi {
   /// 「今どれだけ叩いているか」を出せないと調整しようがないので数えておく。
   final List<DateTime> _recentCalls = [];
 
+  /// 認可済みトークンに足りない scope。403 の切り分けと、書き込みを試す前の
+  /// 足切りに使う（[SpotifyConfig.scopes] との差）。
+  Set<String> get missingScopes => _auth.missingScopes;
+
+  /// プレイリストの中身を書き換えるのに要る scope。公開・非公開で別。
+  static const _playlistWriteScopes = {
+    'playlist-modify-public',
+    'playlist-modify-private',
+  };
+
+  static bool _isPlaylistWrite(String method, String path) =>
+      method != 'GET' && path.startsWith('/playlists/');
+
   /// 直近 30 秒に投げたリクエスト数。
   int get callsInWindow {
     _trimRecentCalls();
@@ -406,11 +419,30 @@ class SpotifyApi {
 
       case 403:
         final message = _errorMessage(response);
+        debugPrint(
+          'Spotify 403 on $method $path — message=$message / '
+          '足りない scope=${_auth.missingScopes}',
+        );
         // 「権限が足りない」と「Premium が要る」は同じ 403 で返るので、
         // 文面でしか切り分けられない。
         if (message != null &&
             message.toLowerCase().contains('insufficient client scope')) {
           throw SpotifyScopeException();
+        }
+        // ただし **`/playlists/*` の書き込みは素の "Forbidden" しか返さない。**
+        // 文面が使えないので、手元の控えで書き込みの scope が欠けていると
+        // 分かっているときだけ、そちらだと言い切る。
+        if (_isPlaylistWrite(method, path) &&
+            _auth.missingScopes.any(_playlistWriteScopes.contains)) {
+          throw SpotifyScopeException();
+        }
+        if (path.startsWith('/playlists/')) {
+          // Premium の話ではないので、既定の文面を出してはいけない。
+          throw SpotifyApiException(
+            'プレイリストを変更できませんでした（Spotify: ${message ?? 'Forbidden'}）。'
+            'Spotify と再連携すると直ることがあります。',
+            statusCode: 403,
+          );
         }
         throw SpotifyApiException(
           message ?? 'この操作は許可されていません（Premium アカウントが必要です）',

@@ -52,11 +52,20 @@ const _someoneElses = PlaylistSummary(
 );
 
 class _FakeApi extends SpotifyApi {
-  _FakeApi({this.contextUri = 'spotify:playlist:p1', this.userId = 'me'})
-    : super(AuthService());
+  _FakeApi({
+    this.contextUri = 'spotify:playlist:p1',
+    this.userId = 'me',
+    this.missing = const {},
+  }) : super(AuthService());
 
   final String? contextUri;
   final String? userId;
+
+  /// トークンに足りない scope。既定は「揃っている」。
+  final Set<String> missing;
+
+  @override
+  Set<String> get missingScopes => missing;
 
   /// 書き込みの記録。`add:<playlistId>:<trackUri>` / `remove:…`。
   final List<String> writes = [];
@@ -233,6 +242,34 @@ void main() {
     expect(api.writes, ['add:p2:spotify:track:cur']);
     expect(controller.addingTrack, isNull, reason: '選び終わったらモードは畳む');
     expect(controller.playlists.firstWhere((p) => p.id == 'p2').trackCount, 43);
+  });
+
+  group('scope が足りないときは叩かずに理由を出す', () {
+    // /playlists/* の 403 は素の "Forbidden" しか返ってこない。それを見せても
+    // 何をすればいいのか分からないので、手前で言い切る。
+    _FakeApi shortApi() => _FakeApi(missing: const {'playlist-modify-private'});
+
+    test('追加は選択を畳まずに止める（再連携後に選び直せる）', () async {
+      final api = shortApi();
+      final controller = await _boot(api);
+      controller.beginAddToPlaylist(_track);
+
+      await controller.addToPlaylist(_alsoMine, _track);
+
+      expect(api.writes, isEmpty);
+      expect(controller.errorBanner, contains('再連携'));
+      expect(controller.addingTrack, _track);
+    });
+
+    test('削除も止める', () async {
+      final api = shortApi();
+      final controller = await _boot(api);
+
+      await controller.removeFromPlaylist(_mine, _track);
+
+      expect(api.writes, isEmpty);
+      expect(controller.errorBanner, contains('再連携'));
+    });
   });
 
   test('別のタブへ移ると追加モードは畳まれる', () async {

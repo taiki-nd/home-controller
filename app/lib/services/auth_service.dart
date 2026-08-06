@@ -88,12 +88,13 @@ class AuthService extends ChangeNotifier {
   /// scope を足したあと、まだ再連携していない状態。
   ///
   /// 叩いて 403 を見てから気づくのでは「原因の分からないエラー」にしかならない
-  /// ので、リクエストを 1 本も使わずに手前で判定する。判定材料は「認可を通した
-  /// ときに要求した scope」で、Spotify は要求どおりに出すか丸ごと拒否するかの
-  /// どちらかなので、これで足りる。
+  /// ので、リクエストを 1 本も使わずに手前で判定する。
   ///
-  /// ただしユーザーがアカウント設定側で権限を剥がした場合はここをすり抜ける。
-  /// その取りこぼしは [SpotifyScopeException] が実行時に拾う。
+  /// 判定材料は **トークンに実際に付いて返ってきた scope**（[_grantedFrom]）。
+  /// 要求した scope をそのまま控えるのでは判定にならない — Spotify は既に承認済み
+  /// のアプリだと同意画面を飛ばし、**以前承認した scope のままのトークンを返す**
+  /// ことがあるため（[signIn] の `show_dialog` 参照）。要求と実際が食い違うのは
+  /// まさにこのケースで、そこを見逃すと「バナーは出ないのに 403」になる。
   bool get needsReauthorization => isSignedIn && missingScopes.isNotEmpty;
 
   /// 起動時に一度だけ呼ぶ。保存済みトークンを読み戻す。
@@ -117,7 +118,14 @@ class AuthService extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<bool> signIn() async {
+  /// [forceConsent] を立てると同意画面を必ず通す。
+  ///
+  /// **scope を足したあとの取り直しでは必ず立てること。** Spotify は既に承認済みの
+  /// アプリだと同意画面を飛ばし、追加した scope を無視して**以前承認した範囲の
+  /// トークンを返す**ことがある。そうなると「サインアウトして入り直したのに 403」
+  /// になり、しかも要求 scope しか控えていないと手元では気づけない。
+  /// `show_dialog=true` で必ず承認を通せば、要求した scope が入って返ってくる。
+  Future<bool> signIn({bool forceConsent = false}) async {
     if (!SpotifyConfig.isConfigured) {
       _error = 'SPOTIFY_CLIENT_ID が設定されていません';
       notifyListeners();
@@ -136,8 +144,9 @@ class AuthService extends ChangeNotifier {
               SpotifyConfig.redirectUri,
               serviceConfiguration: _serviceConfiguration,
               scopes: SpotifyConfig.scopes,
-              // Spotify は既に認可済みでも同意画面を出せる。アカウントを
-              // 切り替えたいときのために毎回選ばせる必要は無いので既定のまま。
+              additionalParameters: forceConsent
+                  ? const {'show_dialog': 'true'}
+                  : null,
             ),
           )
           .timeout(_authorizeTimeout);
@@ -146,9 +155,9 @@ class AuthService extends ChangeNotifier {
         accessToken: result.accessToken,
         refreshToken: result.refreshToken,
         expiresAt: result.accessTokenExpirationDateTime,
-        // scope が増えるのは認可を通したときだけ。リフレッシュでは増えないので
-        // ここでしか書かない。
-        grantedScopes: SpotifyConfig.scopes.toSet(),
+        // 実際に付いた scope を控える。返ってこなかったときだけ「要求どおりに
+        // 出た」とみなす（OAuth の仕様上、要求と同じなら省略できる）。
+        grantedScopes: _grantedFrom(result) ?? SpotifyConfig.scopes.toSet(),
       ).timeout(_storageTimeout);
       return isSignedIn;
     } on TimeoutException {
@@ -172,8 +181,8 @@ class AuthService extends ChangeNotifier {
   /// 挟まない（トークンは [_persist] が上書きする）。
   ///
   /// 中身は [signIn] と同じだが、呼び出し側の意図が「ログイン」ではなく
-  /// 「権限の追加」なので名前を分けている。
-  Future<bool> reauthorize() => signIn();
+  /// 「権限の追加」なので名前を分けている。同意画面は必ず通す。
+  Future<bool> reauthorize() => signIn(forceConsent: true);
 
   Future<void> signOut() async {
     _accessToken = null;
@@ -220,6 +229,10 @@ class AuthService extends ChangeNotifier {
         accessToken: result.accessToken,
         refreshToken: result.refreshToken,
         expiresAt: result.accessTokenExpirationDateTime,
+        // リフレッシュで scope が増えることはないが、**控えが実態より広い**
+        // ときにここで初めて分かる（前のバージョンが要求 scope をそのまま
+        // 控えていた場合など）。返ってきたら控えを実態に合わせる。
+        grantedScopes: _grantedFrom(result),
       );
       return _accessToken;
     } catch (e) {
@@ -282,6 +295,18 @@ class AuthService extends ChangeNotifier {
       );
     }
     notifyListeners();
+  }
+
+  /// トークンに実際に付いた scope。Spotify は token レスポンスの `scope` に返す。
+  ///
+  /// 要求と同じなら省略してよい仕様なので、取れなければ null を返して呼ぶ側の
+  /// 判断に任せる（控えを消してはいけない）。
+  static Set<String>? _grantedFrom(TokenResponse result) {
+    final scopes = result.scopes;
+    if (scopes != null && scopes.isNotEmpty) return scopes.toSet();
+    final raw = result.tokenAdditionalParameters?['scope'];
+    if (raw is String && raw.trim().isNotEmpty) return _decodeScopes(raw);
+    return null;
   }
 
   /// OAuth の scope は空白区切り。念のため他の区切りも受ける。
