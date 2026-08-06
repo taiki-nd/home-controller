@@ -200,9 +200,9 @@ class _ShellDrawer extends StatelessWidget {
                   _ModeRow(
                     icon: Icons.link_rounded,
                     label: 'SPOTIFY と再連携',
-                    subtitle: music.auth.needsReauthorization
-                        ? '権限が足りません'
-                        : '権限を取り直す',
+                    // 「足りない」のか「足りているはずなのに拒否される」のかは
+                    // ここを見れば分かる（AuthService.scopeSummary）。
+                    subtitle: music.auth.scopeSummary,
                     selected: false,
                     onTap: () {
                       Navigator.of(context).pop();

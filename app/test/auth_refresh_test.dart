@@ -166,6 +166,44 @@ void main() {
       );
     });
 
+    test('実測かどうかを控えて画面に出せるようにする', () async {
+      final values = storedTokens();
+      final withScopes = buildSignedIn(
+        _RefreshingAppAuth(scopes: SpotifyConfig.scopes),
+        values,
+      );
+      await withScopes.accessToken();
+
+      expect(withScopes.scopesVerified, isTrue);
+      expect(values['spotify_granted_scopes_verified'], '1');
+      expect(withScopes.scopeSummary, contains('確認済み'));
+
+      // 実測の控えは 403 でも落とさない。落とすと再連携を無限に勧めてしまう。
+      await withScopes.invalidateScopeRecord(const ['playlist-modify-public']);
+      expect(withScopes.missingScopes, isEmpty);
+    });
+
+    test('仮定で控えているうちは 403 を実測として採る', () async {
+      final values = storedTokens()
+        ..['spotify_granted_scopes'] = SpotifyConfig.scopes.join(' ');
+      final auth = buildSignedIn(_RefreshingAppAuth(), values);
+      await auth.restore();
+
+      expect(auth.scopesVerified, isFalse, reason: 'キーが無い＝当て推量');
+      expect(auth.scopeSummary, contains('未確認'));
+
+      await auth.invalidateScopeRecord(const [
+        'playlist-modify-public',
+        'playlist-modify-private',
+      ]);
+
+      expect(auth.needsReauthorization, isTrue);
+      expect(auth.missingScopes, {
+        'playlist-modify-public',
+        'playlist-modify-private',
+      });
+    });
+
     test('scope が返ってこなければ控えを消さない', () async {
       final values = storedTokens()
         ..['spotify_granted_scopes'] = SpotifyConfig.scopes.join(' ');

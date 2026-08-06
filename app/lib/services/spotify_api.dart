@@ -430,17 +430,23 @@ class SpotifyApi {
           throw SpotifyScopeException();
         }
         // ただし **`/playlists/*` の書き込みは素の "Forbidden" しか返さない。**
-        // 文面が使えないので、手元の控えで書き込みの scope が欠けていると
-        // 分かっているときだけ、そちらだと言い切る。
-        if (_isPlaylistWrite(method, path) &&
-            _auth.missingScopes.any(_playlistWriteScopes.contains)) {
-          throw SpotifyScopeException();
-        }
-        if (path.startsWith('/playlists/')) {
-          // Premium の話ではないので、既定の文面を出してはいけない。
+        // 文面が使えないので、控えている scope で切り分ける。
+        if (_isPlaylistWrite(method, path)) {
+          if (_auth.missingScopes.any(_playlistWriteScopes.contains)) {
+            throw SpotifyScopeException();
+          }
+          if (!_auth.scopesVerified) {
+            // 控えは「要求どおり出たはず」という仮定だった。**403 のほうが実測**
+            // なので控えを落とし、再連携の導線（バナー・☰）を出させる。
+            unawaited(_auth.invalidateScopeRecord(_playlistWriteScopes));
+            throw SpotifyScopeException();
+          }
+          // Spotify が「書き込み権限あり」と返したトークンで拒否された。
+          // ここまで来たら scope の話ではないので、再連携を勧めてはいけない。
           throw SpotifyApiException(
             'プレイリストを変更できませんでした（Spotify: ${message ?? 'Forbidden'}）。'
-            'Spotify と再連携すると直ることがあります。',
+            '書き込み権限は付いています（Spotify 確認済み）。'
+            'リストの所有者と公開設定を確認してください。',
             statusCode: 403,
           );
         }

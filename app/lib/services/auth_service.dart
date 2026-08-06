@@ -46,6 +46,10 @@ class AuthService extends ChangeNotifier {
   /// バージョンでログインした古いトークン**、と読む（[needsReauthorization]）。
   static const _kGrantedScopes = 'spotify_granted_scopes';
 
+  /// 上が **Spotify から返ってきた実測値**か（'1'）、「要求どおり出たはず」という
+  /// 当て推量か（キー無し）。キーが無い＝当て推量、と読む。
+  static const _kScopesVerified = 'spotify_granted_scopes_verified';
+
   static const _serviceConfiguration = AuthorizationServiceConfiguration(
     authorizationEndpoint: SpotifyConfig.authorizationEndpoint,
     tokenEndpoint: SpotifyConfig.tokenEndpoint,
@@ -69,6 +73,13 @@ class AuthService extends ChangeNotifier {
   String? _refreshToken;
   Set<String> _grantedScopes = const {};
 
+  /// [_grantedScopes] が実測か当て推量か。
+  ///
+  /// OAuth では「要求と同じなら token レスポンスの `scope` は省略してよい」ので、
+  /// 返ってこないこともある。そのときは要求どおり出たと**仮定して**控えるしかない。
+  /// 仮定のまま 403 を食らったら、控えではなく 403 を信じる（[invalidateScopeRecord]）。
+  bool _scopesVerified = false;
+
   bool _restored = false;
   bool _busy = false;
   String? _error;
@@ -84,6 +95,40 @@ class AuthService extends ChangeNotifier {
   /// [SpotifyConfig.scopes] のうち、保存済みトークンが持っていないもの。
   Set<String> get missingScopes =>
       SpotifyConfig.scopes.toSet().difference(_grantedScopes);
+
+  /// 控えが Spotify の返答そのものか。false なら「要求どおり出たはず」という仮定。
+  bool get scopesVerified => _scopesVerified;
+
+  /// 権限まわりの状態を 1 行で。**画面に出して切り分けるためのもの。**
+  /// 「足りない」のか「足りているはずなのに拒否される」のかを人が見て言えるようにする。
+  String get scopeSummary {
+    if (!isSignedIn) return 'サインインしていません';
+    if (missingScopes.isNotEmpty) {
+      return '権限が ${missingScopes.length} 件足りません';
+    }
+    return _scopesVerified ? '権限あり（Spotify 確認済み）' : '権限あり（未確認）';
+  }
+
+  /// **403 を食らった＝控えが実態と違っていた。** 控えより 403 のほうが実測なので、
+  /// 疑わしい scope を落として再連携へ倒す。
+  ///
+  /// 実測（[scopesVerified]）の控えは触らない。そこまで確かめた上で 403 なら
+  /// 原因は scope ではないので、何度も再連携させても解決しない。
+  Future<void> invalidateScopeRecord(Iterable<String> suspect) async {
+    if (_scopesVerified) return;
+    final dropped = _grantedScopes.difference(suspect.toSet());
+    if (dropped.length == _grantedScopes.length) return; // もう持っていない
+    _grantedScopes = dropped;
+    try {
+      await _storage.write(
+        key: _kGrantedScopes,
+        value: _grantedScopes.join(' '),
+      );
+    } catch (e) {
+      debugPrint('invalidateScopeRecord: 控えの書き戻しに失敗: $e');
+    }
+    notifyListeners();
+  }
 
   /// scope を足したあと、まだ再連携していない状態。
   ///
@@ -106,6 +151,7 @@ class AuthService extends ChangeNotifier {
       final raw = await _storage.read(key: _kExpiresAt);
       _expiresAt = raw == null ? null : DateTime.tryParse(raw);
       _grantedScopes = _decodeScopes(await _storage.read(key: _kGrantedScopes));
+      _scopesVerified = await _storage.read(key: _kScopesVerified) == '1';
     } catch (e) {
       // Keychain / KeyStore が壊れている場合。読めないなら未ログイン扱いで良い。
       debugPrint('AuthService.restore failed: $e');
@@ -113,6 +159,7 @@ class AuthService extends ChangeNotifier {
       _accessToken = null;
       _expiresAt = null;
       _grantedScopes = const {};
+      _scopesVerified = false;
     }
     _restored = true;
     notifyListeners();
@@ -155,7 +202,9 @@ class AuthService extends ChangeNotifier {
         expiresAt: result.accessTokenExpirationDateTime,
         // 実際に付いた scope を控える。返ってこなかったときだけ「要求どおりに
         // 出た」とみなす（OAuth の仕様上、要求と同じなら省略できる）。
+        // 仮定で控えたことは [_kScopesVerified] を書かないことで残しておく。
         grantedScopes: _grantedFrom(result) ?? SpotifyConfig.scopes.toSet(),
+        scopesVerified: _grantedFrom(result) != null,
       ).timeout(_storageTimeout);
       return isSignedIn;
     } on TimeoutException {
@@ -187,10 +236,12 @@ class AuthService extends ChangeNotifier {
     _refreshToken = null;
     _expiresAt = null;
     _grantedScopes = const {};
+    _scopesVerified = false;
     await _storage.delete(key: _kAccessToken);
     await _storage.delete(key: _kRefreshToken);
     await _storage.delete(key: _kExpiresAt);
     await _storage.delete(key: _kGrantedScopes);
+    await _storage.delete(key: _kScopesVerified);
     notifyListeners();
   }
 
@@ -231,6 +282,7 @@ class AuthService extends ChangeNotifier {
         // ときにここで初めて分かる（前のバージョンが要求 scope をそのまま
         // 控えていた場合など）。返ってきたら控えを実態に合わせる。
         grantedScopes: _grantedFrom(result),
+        scopesVerified: _grantedFrom(result) == null ? null : true,
       );
       return _accessToken;
     } catch (e) {
@@ -269,6 +321,7 @@ class AuthService extends ChangeNotifier {
     required String? refreshToken,
     required DateTime? expiresAt,
     Set<String>? grantedScopes,
+    bool? scopesVerified,
   }) async {
     if (grantedScopes != null) {
       _grantedScopes = grantedScopes;
@@ -276,6 +329,13 @@ class AuthService extends ChangeNotifier {
         key: _kGrantedScopes,
         value: grantedScopes.join(' '),
       );
+    }
+    if (scopesVerified != null) {
+      _scopesVerified = scopesVerified;
+      // 実測でないときはキーごと消す。「無い＝当て推量」で読めるようにする。
+      await (scopesVerified
+          ? _storage.write(key: _kScopesVerified, value: '1')
+          : _storage.delete(key: _kScopesVerified));
     }
     if (accessToken != null) {
       _accessToken = accessToken;

@@ -188,7 +188,10 @@ void main() {
 
     // /playlists/* の書き込みは、scope が足りなくても素の "Forbidden" しか
     // 返ってこない。文面では切り分けられないので、控えの scope で判断する。
-    SpotifyApi playlistApi({required bool hasWriteScope}) {
+    SpotifyApi playlistApi({
+      required bool hasWriteScope,
+      bool verified = true,
+    }) {
       final dio =
           Dio(
               BaseOptions(
@@ -207,7 +210,13 @@ void main() {
                 .where((s) => !s.startsWith('playlist-modify'))
                 .toList();
       return SpotifyApi(
-        signedInAuth(extra: {'spotify_granted_scopes': granted.join(' ')}),
+        signedInAuth(
+          extra: {
+            'spotify_granted_scopes': granted.join(' '),
+            // キーが有る＝ Spotify が実際に返してきた scope を控えている。
+            if (verified) 'spotify_granted_scopes_verified': '1',
+          },
+        ),
         dio: dio,
       );
     }
@@ -221,7 +230,23 @@ void main() {
       );
     });
 
-    test('scope が揃っているなら Forbidden はそのまま伝える（再連携の案内つき）', () async {
+    // 控えが仮定のままだと「権限はあるはずなのに 403」で手が止まる。
+    // 403 のほうが実測なので、控えを落として再連携へ倒す。
+    test('控えが未確認なら、Forbidden を実測として控えを落とす', () async {
+      final api = playlistApi(hasWriteScope: true, verified: false);
+
+      await expectLater(
+        api.addTrackToPlaylist('p1', 'spotify:track:t1'),
+        throwsA(isA<SpotifyScopeException>()),
+      );
+      // 次からは叩く前に「権限が足りない」と分かる。
+      expect(api.missingScopes, {
+        'playlist-modify-public',
+        'playlist-modify-private',
+      });
+    });
+
+    test('Spotify 確認済みの scope で拒否されたら、再連携を勧めない', () async {
       final api = playlistApi(hasWriteScope: true);
 
       await expectLater(
@@ -236,6 +261,8 @@ void main() {
               .having((e) => e.message, '文面', contains('Forbidden')),
         ),
       );
+      // 控えは実測なので落とさない（何度再連携させても直らないため）。
+      expect(api.missingScopes, isEmpty);
     });
 
     test('Premium 由来の 403 は素通しする', () async {
