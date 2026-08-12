@@ -7,7 +7,10 @@
 class AppFlags {
   AppFlags._();
 
-  /// music（Spotify）側を出すか。
+  /// music（Spotify）と hi-res（Music Assistant）を出すか。
+  ///
+  /// 2 つを同じフラグで束ねているのは、どちらも音楽サービスの資格情報を
+  /// 前提にした内輪向けの機能で、公開ビルドではまとめて落としたいから。
   ///
   /// - `ios-test-v*` タグ / 手元のビルド → true（内輪配布。Spotify の
   ///   development mode は 25 ユーザーまでなのでこの範囲で収まる）

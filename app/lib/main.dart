@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import 'services/app_flags.dart';
 import 'state/home_controller.dart';
+import 'state/ma_controller.dart';
 import 'state/music_section.dart';
 import 'theme/tokens.dart';
 import 'ui/app_shell.dart';
@@ -14,9 +15,10 @@ Future<void> main() async {
   runApp(const HomeCtlApp());
 }
 
-/// home（Home Assistant）と music（Spotify）を束ねる。
+/// home（Home Assistant）と music（Spotify）と hi-res（Music Assistant）を束ねる。
 ///
-/// music は [AppFlags.enableMusic] が false のビルドでは**そもそも作らない。**
+/// music と hi-res は [AppFlags.enableMusic] が false のビルドでは
+/// **そもそも作らない。**
 /// 実行時に隠すのではなくコンパイル時に落とすので、公開バイナリからは
 /// Spotify のコードパスに到達できない（`docs/release-strategy.md` §3）。
 class HomeCtlApp extends StatefulWidget {
@@ -29,11 +31,14 @@ class HomeCtlApp extends StatefulWidget {
 class _HomeCtlAppState extends State<HomeCtlApp> {
   final HomeController _home = HomeController();
   final MusicSection? _music = AppFlags.enableMusic ? MusicSection() : null;
+  final MaController? _assistant =
+      AppFlags.enableMusic ? MaController() : null;
 
   @override
   void dispose() {
     _home.dispose();
     _music?.dispose();
+    _assistant?.dispose();
     super.dispose();
   }
 
@@ -43,7 +48,7 @@ class _HomeCtlAppState extends State<HomeCtlApp> {
       title: 'home-ctl',
       debugShowCheckedModeBanner: false,
       theme: buildAppTheme(),
-      home: AppShell(home: _home, music: _music),
+      home: AppShell(home: _home, music: _music, assistant: _assistant),
     );
   }
 }

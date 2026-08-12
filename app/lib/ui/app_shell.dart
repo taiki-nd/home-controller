@@ -3,14 +3,17 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../state/home_controller.dart';
+import '../state/ma_controller.dart';
 import '../state/music_section.dart';
 import '../theme/tokens.dart';
+import 'assistant/ma_setup_screen.dart';
+import 'assistant/ma_view.dart';
 import 'home/ha_setup_screen.dart';
 import 'home/home_screen.dart';
 import 'music/music_view.dart';
 import 'widgets/atoms.dart';
 
-enum AppMode { music, home }
+enum AppMode { music, assistant, home }
 
 /// home と music を最上位で分ける外枠。
 ///
@@ -19,12 +22,17 @@ enum AppMode { music, home }
 /// WebSocket も張り直しになる。壁掛けだとこのチラつきが目立つ
 /// （`docs/home-assistant-integration.md` §10）。
 class AppShell extends StatefulWidget {
-  const AppShell({super.key, required this.home, this.music});
+  const AppShell({super.key, required this.home, this.music, this.assistant});
 
   final HomeController home;
 
   /// null なら music を出さない（`ENABLE_MUSIC=false` の公開ビルド）。
   final MusicSection? music;
+
+  /// Music Assistant（Qobuz を WiiM で鳴らす側）。music と同じフラグで出す
+  /// ——どちらも音楽サービスに繋ぐ内輪向けの機能なので、公開ビルドでは
+  /// まとめて落とす（`docs/music-assistant-integration.md` §6）。
+  final MaController? assistant;
 
   /// 無操作で music に戻るまで。
   ///
@@ -41,10 +49,18 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   final _scaffoldKey = GlobalKey<ScaffoldState>();
 
-  late AppMode _mode = widget.music == null ? AppMode.home : AppMode.music;
+  late AppMode _mode = _idleHome;
   Timer? _idle;
 
-  bool get _hasMusic => widget.music != null;
+  /// 無操作で戻る先。music を落とした公開ビルドでは home しか無いので、
+  /// そのときは戻る動き自体をやめる。
+  AppMode get _idleHome {
+    if (widget.music != null) return AppMode.music;
+    if (widget.assistant != null) return AppMode.assistant;
+    return AppMode.home;
+  }
+
+  bool get _hasMusic => _idleHome != AppMode.home;
 
   @override
   void initState() {
@@ -52,6 +68,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     widget.home.start();
     widget.music?.start();
+    widget.assistant?.start();
   }
 
   @override
@@ -63,8 +80,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // 前面にいない間は HA との接続を張りっぱなしにしない。
-    widget.home.setForeground(state == AppLifecycleState.resumed);
+    // 前面にいない間は HA / MA との接続を張りっぱなしにしない。
+    final foreground = state == AppLifecycleState.resumed;
+    widget.home.setForeground(foreground);
+    widget.assistant?.setForeground(foreground);
   }
 
   void _switch(AppMode mode) {
@@ -77,7 +96,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     _idle?.cancel();
     if (_mode != AppMode.home || !_hasMusic) return;
     _idle = Timer(AppShell.idleTimeout, () {
-      if (mounted) setState(() => _mode = AppMode.music);
+      if (mounted) setState(() => _mode = _idleHome);
     });
   }
 
@@ -96,9 +115,25 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _openAssistantSetup() async {
+    final assistant = widget.assistant;
+    if (assistant == null) return;
+    Navigator.of(context).pop();
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => MaSetupScreen(
+          controller: assistant,
+          isRoot: false,
+          onOpenMenu: () => Navigator.of(context).pop(),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final music = widget.music;
+    final assistant = widget.assistant;
     final home = HomeScreen(controller: widget.home, onOpenMenu: _openMenu);
 
     return Listener(
@@ -115,22 +150,51 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           mode: _mode,
           home: widget.home,
           music: music,
+          assistant: assistant,
           onSelect: (mode) {
             Navigator.of(context).pop();
             _switch(mode);
           },
           onOpenSetup: _openSetup,
+          onOpenAssistantSetup: _openAssistantSetup,
         ),
-        body: music == null
-            ? home
-            : IndexedStack(
-                index: _mode == AppMode.music ? 0 : 1,
-                children: [
-                  MusicView(section: music, onOpenMenu: _openMenu),
-                  home,
-                ],
-              ),
+        // **`Navigator.push` ではなく `IndexedStack`。** 出す面はビルド時の
+        // フラグで増減するので、モードと子の対応は毎回ここで組み直す。
+        body: _Panes(
+          mode: _mode,
+          panes: {
+            if (music != null)
+              AppMode.music: MusicView(section: music, onOpenMenu: _openMenu),
+            if (assistant != null)
+              AppMode.assistant:
+                  MaView(controller: assistant, onOpenMenu: _openMenu),
+            AppMode.home: home,
+          },
+        ),
       ),
+    );
+  }
+}
+
+/// モードごとの面を [IndexedStack] に並べる。
+///
+/// 1 つしか無いときは素通しにして、余計な階層を挟まない。
+class _Panes extends StatelessWidget {
+  const _Panes({required this.mode, required this.panes});
+
+  final AppMode mode;
+  final Map<AppMode, Widget> panes;
+
+  @override
+  Widget build(BuildContext context) {
+    if (panes.length == 1) return panes.values.first;
+    final modes = panes.keys.toList();
+    final index = modes.indexOf(mode);
+    return IndexedStack(
+      // 出していないモードが選ばれることは無いはずだが、選ばれても
+      // 落とさずに先頭（= 無操作で戻る先）を出す。
+      index: index < 0 ? 0 : index,
+      children: panes.values.toList(),
     );
   }
 }
@@ -140,26 +204,31 @@ class _ShellDrawer extends StatelessWidget {
     required this.mode,
     required this.home,
     required this.music,
+    required this.assistant,
     required this.onSelect,
     required this.onOpenSetup,
+    required this.onOpenAssistantSetup,
   });
 
   final AppMode mode;
   final HomeController home;
   final MusicSection? music;
+  final MaController? assistant;
   final ValueChanged<AppMode> onSelect;
   final VoidCallback onOpenSetup;
+  final VoidCallback onOpenAssistantSetup;
 
   @override
   Widget build(BuildContext context) {
     final music = this.music;
+    final assistant = this.assistant;
     return Drawer(
       backgroundColor: AppColors.surface,
       child: SafeArea(
         child: ListenableBuilder(
           // 開いた瞬間に両方の要約が見えるようにする。片方の状態を見るためだけに
           // モードを切り替えることが無くなる。
-          listenable: Listenable.merge([home, ?music]),
+          listenable: Listenable.merge([home, ?music, ?assistant]),
           builder: (context, _) {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -176,6 +245,14 @@ class _ShellDrawer extends StatelessWidget {
                     selected: mode == AppMode.music,
                     onTap: () => onSelect(AppMode.music),
                   ),
+                if (assistant != null)
+                  _ModeRow(
+                    icon: Icons.graphic_eq,
+                    label: 'HI-RES',
+                    subtitle: assistant.drawerSubtitle,
+                    selected: mode == AppMode.assistant,
+                    onTap: () => onSelect(AppMode.assistant),
+                  ),
                 _ModeRow(
                   icon: Icons.home_outlined,
                   label: 'HOME',
@@ -187,11 +264,19 @@ class _ShellDrawer extends StatelessWidget {
                 Divider(color: AppColors.white(0.08), height: 24),
                 _ModeRow(
                   icon: Icons.settings_outlined,
-                  label: '接続設定',
+                  label: 'HOME の接続設定',
                   subtitle: home.connection?.baseUrl.host,
                   selected: false,
                   onTap: onOpenSetup,
                 ),
+                if (assistant != null)
+                  _ModeRow(
+                    icon: Icons.settings_ethernet,
+                    label: 'MUSIC ASSISTANT の接続設定',
+                    subtitle: assistant.connection?.baseUrl.host ?? '未設定',
+                    selected: false,
+                    onTap: onOpenAssistantSetup,
+                  ),
                 // scope を足したときの取り直し口。**常に出しておく。**
                 // 帯（ReauthBanner）は「控えた scope が足りない」と分かって
                 // いるときしか出ないので、控えが実態より広いと出る手が無くなる。
