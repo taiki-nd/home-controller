@@ -91,7 +91,7 @@ class _NewReleasesPanelState extends State<NewReleasesPanel> {
     }
 
     if (controller.releases.isEmpty) {
-      return _Message(
+      final message = _Message(
         text: controller.coverage.followed == 0
             ? 'フォロー中のアーティストがいません。\nSpotify でアーティストをフォローすると、ここに新譜が並びます。'
             : 'この ${NewReleasesController.pastDays} 日間と、'
@@ -99,6 +99,17 @@ class _NewReleasesPanelState extends State<NewReleasesPanel> {
                   '出るアルバムはありません。',
         actionLabel: '取り直す',
         onAction: () => controller.load(force: true),
+      );
+      // **1 件も出ないときこそ理由が要る。** 脚注はここにも出す
+      // （照合から漏れた名前が並ぶ）。
+      if (controller.coverage.missing == 0) return message;
+      return ListView(
+        padding: EdgeInsets.zero,
+        children: [
+          SizedBox(height: widget.compact ? 24 : 40),
+          message,
+          _Footnote(controller: controller),
+        ],
       );
     }
 
@@ -310,14 +321,34 @@ class _ReleaseRow extends StatelessWidget {
 }
 
 /// 出所の明示と、照合から漏れたアーティスト。
-class _Footnote extends StatelessWidget {
+class _Footnote extends StatefulWidget {
   const _Footnote({required this.controller});
 
   final NewReleasesController controller;
 
   @override
+  State<_Footnote> createState() => _FootnoteState();
+}
+
+class _FootnoteState extends State<_Footnote> {
+  /// 畳まずに出す名前の数。
+  ///
+  /// **漏れた組数だけでは「誰が出ていないのか」が分からない**ので名前を出すが、
+  /// フォローが多いと数十組になる。全部並べると新譜より脚注のほうが長くなって
+  /// しまうので、はじめはここまでにして残りは畳む。
+  static const _previewCount = 8;
+
+  bool _expanded = false;
+
+  @override
   Widget build(BuildContext context) {
-    final missing = controller.coverage.missing;
+    final missing = widget.controller.coverage.missing;
+    final names = widget.controller.unresolvedArtists;
+    final hidden = names.length - _previewCount;
+    final shown = _expanded || hidden <= 0
+        ? names
+        : names.take(_previewCount).toList();
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 18, 8, 2),
       child: Column(
@@ -335,6 +366,35 @@ class _Footnote extends StatelessWidget {
               'この一覧に出ません。',
               style: AppText.body(12, color: AppColors.white(0.28), height: 1.6),
             ),
+            if (shown.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                shown.join('、'),
+                // 本文より明るくする。ここは「読ませたい情報」で、
+                // 上 2 行の但し書きとは役割が違う。
+                style: AppText.body(
+                  12,
+                  color: AppColors.white(0.42),
+                  height: 1.6,
+                ),
+              ),
+            ],
+            if (hidden > 0)
+              GestureDetector(
+                onTap: () => setState(() => _expanded = !_expanded),
+                behavior: HitTestBehavior.opaque,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Text(
+                    _expanded ? '畳む' : 'ほか $hidden 組を表示',
+                    style: AppText.body(
+                      12,
+                      color: AppColors.green,
+                      height: 1.6,
+                    ),
+                  ),
+                ),
+              ),
           ],
         ],
       ),

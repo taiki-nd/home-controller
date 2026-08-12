@@ -617,7 +617,9 @@ void _panelTests() {
     ),
   );
 
-  NewReleasesController loaded() {
+  /// s0 だけが MusicBrainz に対応づいている状態。[followed] を渡すと母集団を
+  /// 増やせる（照合から漏れた名前の出し方を見るため）。
+  NewReleasesController loaded({List<FollowedArtist>? followed}) {
     final adapter = FakeAdapter((options) {
       if (options.path == '/url') {
         return _json({
@@ -664,11 +666,68 @@ void _panelTests() {
       });
     });
     return NewReleasesController(
-      FakeFollowApi([artist('s0'), artist('s9')]),
+      FakeFollowApi(followed ?? [artist('s0'), artist('s9')]),
       mbWith(adapter),
       now: () => DateTime(2026, 8, 4),
     );
   }
+
+  Widget panel(NewReleasesController controller, Size size) => wrap(
+    NewReleasesPanel(
+      controller: controller,
+      compact: size.width < 420,
+      onPlay: (_) {},
+      now: () => DateTime(2026, 8, 4),
+    ),
+    size,
+  );
+
+  testWidgets('照合できなかったアーティストを名前で出す', (tester) async {
+    const size = Size(452, 834);
+    tester.view.physicalSize = size;
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(panel(loaded(), size));
+    await tester.pumpAndSettle();
+    await tester.dragUntilVisible(
+      find.textContaining('対応付けが無いため'),
+      find.byType(ListView),
+      const Offset(0, -60),
+    );
+
+    // 「1 組漏れた」だけでは誰か分からない。名前まで出す。
+    expect(find.text('Artist s9'), findsOneWidget);
+  });
+
+  testWidgets('漏れが多いときは畳んで、押すと残りを出す', (tester) async {
+    const size = Size(452, 834);
+    tester.view.physicalSize = size;
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    // s0 だけ対応づき、s1〜s12 の 12 組が漏れる。
+    final controller = loaded(
+      followed: [artist('s0'), for (var i = 1; i <= 12; i++) artist('s$i')],
+    );
+    await tester.pumpWidget(panel(controller, size));
+    await tester.pumpAndSettle();
+    await tester.dragUntilVisible(
+      find.textContaining('対応付けが無いため'),
+      find.byType(ListView),
+      const Offset(0, -60),
+    );
+
+    // 8 組まで出して、残り 4 組は畳む。
+    expect(find.textContaining('Artist s1、'), findsOneWidget);
+    expect(find.text('ほか 4 組を表示'), findsOneWidget);
+
+    await tester.tap(find.text('ほか 4 組を表示'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('畳む'), findsOneWidget);
+    expect(find.textContaining('Artist s9'), findsOneWidget);
+  });
 
   for (final (name, size) in [
     ('iPad', const Size(452, 834)),
