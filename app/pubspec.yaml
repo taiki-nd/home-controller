@@ -4,7 +4,7 @@ publish_to: 'none'
 
 # CFBundleShortVersionString / versionName は CI がタグから --build-name で上書きする。
 # ビルド番号は CI が github.run_number を --build-number で渡す。
-version: 1.0.18+1
+version: 1.0.19+1
 
 environment:
   sdk: ^3.11.5
