@@ -274,7 +274,11 @@ void main() {
                 'artist-credit': [
                   {
                     'name': r.artistName,
-                    'artist': {'id': 'mbid-x'},
+                    // フォロー側と同じ MBID を返す（そうしないと
+                    // spotifyArtistIdsOf が引けない組み合わせになる）。
+                    'artist': {
+                      'id': mbids.values.isEmpty ? 'mbid-x' : mbids.values.first,
+                    },
                   },
                 ],
               },
@@ -331,6 +335,23 @@ void main() {
       expect(controller.unresolvedArtists, ['Artist s1', 'Artist s2']);
     });
 
+    test('新譜を出したアーティストの Spotify id を引けるようにする', () async {
+      // 新譜を引くのに使った MBID の対応を捨てないこと。行を押したときの
+      // 突き合わせ先（そのアーティストの棚）がこれで決まる。
+      final controller = NewReleasesController(
+        FakeFollowApi([artist('s0')]),
+        mbReturning(
+          mbids: {'https://open.spotify.com/artist/s0': 'mbid-0'},
+          releases: [release('最近', DateTime(2026, 8, 1))],
+        ),
+        now: () => DateTime(2026, 8, 4),
+      );
+
+      await controller.load();
+
+      expect(controller.spotifyArtistIdsOf(controller.releases.single), ['s0']);
+    });
+
     test('フォローが 0 なら MusicBrainz を叩かない', () async {
       final controller = NewReleasesController(
         FakeFollowApi(const []),
@@ -377,8 +398,195 @@ void main() {
     });
   });
 
+  group('ReleaseResolver', () {
+    test('そのアーティストの棚から選ぶ（MusicBrainz へは行かない）', () async {
+      final spotify = FakeShelfApi(
+        shelves: {
+          'ado': [album('ギラギラ'), album('唱')],
+        },
+      );
+      final mb = FakeLinkMb({});
+
+      final match = await ReleaseResolver(spotify, mb).resolve(
+        mbRelease(title: '唱'),
+        spotifyArtistIds: const ['ado'],
+      );
+
+      expect(match?.name, '唱');
+      // 棚で当たったら 2 本目の経路は使わない。
+      expect(mb.asked, isEmpty);
+    });
+
+    test('別のアーティストの盤は候補にすら入らない', () async {
+      // これが「押したら全く関係ない曲が鳴る」の正体だった。全文検索をやめて
+      // 棚を引くようにしたので、同名タイトルの他人の盤は見えない。
+      final spotify = FakeShelfApi(shelves: {'ado': []});
+
+      final match = await ReleaseResolver(spotify, FakeLinkMb({})).resolve(
+        mbRelease(title: '唱'),
+        spotifyArtistIds: const ['ado'],
+      );
+
+      expect(match, isNull);
+      expect(spotify.askedArtists, ['ado']);
+    });
+
+    test('棚で当たらなければ MusicBrainz の配信リンクから id 直結で拾う', () async {
+      // MB は日本語表記・Spotify は英字表記、のような食い違い。
+      final spotify = FakeShelfApi(
+        shelves: {'ado': [album('Sho')]},
+        albumsById: {'sp-album-1': album('Sho', id: 'sp-album-1')},
+      );
+      final mb = FakeLinkMb({'rg-唱': ['sp-album-1']});
+
+      final match = await ReleaseResolver(spotify, mb).resolve(
+        mbRelease(title: '唱'),
+        spotifyArtistIds: const ['ado'],
+      );
+
+      expect(match?.id, 'sp-album-1');
+      expect(mb.asked, ['rg-唱']);
+    });
+
+    test('どちらの経路も外れたら null を返す', () async {
+      // Spotify にまだ無い新譜。**関連度 1 位で妥協しない。**
+      final spotify = FakeShelfApi(shelves: {'ado': [album('別のアルバム')]});
+
+      final match = await ReleaseResolver(spotify, FakeLinkMb({})).resolve(
+        mbRelease(title: '新曲'),
+        spotifyArtistIds: const ['ado'],
+      );
+
+      expect(match, isNull);
+    });
+
+    test('リンクが消えた id は無かったことにする', () async {
+      // MB のリンクは残っているが Spotify 側から消えた盤（404）。
+      final spotify = FakeShelfApi(shelves: {'ado': []});
+      final mb = FakeLinkMb({'rg-唱': ['sp-dead']});
+
+      final match = await ReleaseResolver(spotify, mb).resolve(
+        mbRelease(title: '唱'),
+        spotifyArtistIds: const ['ado'],
+      );
+
+      expect(match, isNull);
+    });
+
+    test('後ろに付いたエディション表記は許す', () async {
+      final spotify = FakeShelfApi(
+        shelves: {'aimer': [album('残響散歌 - Single')]},
+      );
+
+      final match = await ReleaseResolver(spotify, FakeLinkMb({})).resolve(
+        mbRelease(title: '残響散歌'),
+        spotifyArtistIds: const ['aimer'],
+      );
+
+      expect(match?.name, '残響散歌 - Single');
+    });
+
+    test('エディション表記でない続きは別物として落とす', () async {
+      // 同じアーティストでも "Best" で "Best of 〜" を掴めば別物が鳴る。
+      final spotify = FakeShelfApi(shelves: {'ado': [album('Best of Ado')]});
+
+      final match = await ReleaseResolver(spotify, FakeLinkMb({})).resolve(
+        mbRelease(title: 'Best'),
+        spotifyArtistIds: const ['ado'],
+      );
+
+      expect(match, isNull);
+    });
+
+    test('正規化で空に潰れるタイトルでは棚を引かない', () async {
+      // 空文字同士を一致と見なすと、棚の中で手当たり次第に当たってしまう。
+      // id 直結の 2 本目だけは進む。
+      final spotify = FakeShelfApi(shelves: {'ado': [album('++')]});
+      final mb = FakeLinkMb({});
+
+      final match = await ReleaseResolver(spotify, mb).resolve(
+        mbRelease(title: '+++'),
+        spotifyArtistIds: const ['ado'],
+      );
+
+      expect(match, isNull);
+      expect(spotify.askedArtists, isEmpty);
+      expect(mb.asked, ['rg-+++']);
+    });
+
+    test('アーティストが分からなくても配信リンクだけで当てにいく', () async {
+      // フォローしていない共作相手の盤など、Spotify の id が引けない場合。
+      final spotify = FakeShelfApi(
+        shelves: const {},
+        albumsById: {'sp-album-1': album('Reset', id: 'sp-album-1')},
+      );
+      final mb = FakeLinkMb({'rg-Reset': ['sp-album-1']});
+
+      final match = await ReleaseResolver(spotify, mb).resolve(
+        mbRelease(title: 'Reset'),
+      );
+
+      expect(match?.id, 'sp-album-1');
+    });
+  });
+
   group('パネルの描画', _panelTests);
 }
+
+/// 棚（`/artists/{id}/albums`）とアルバム単体を差し替えた SpotifyApi。
+/// 何を訊かれたかも見る。
+class FakeShelfApi extends SpotifyApi {
+  FakeShelfApi({
+    required this.shelves,
+    this.albumsById = const {},
+  }) : super(AuthService());
+
+  final Map<String, List<SpotifyAlbumMatch>> shelves;
+  final Map<String, SpotifyAlbumMatch> albumsById;
+  final List<String> askedArtists = [];
+
+  @override
+  Future<List<SpotifyAlbumMatch>> artistAlbums(
+    String artistId, {
+    int limit = 50,
+  }) async {
+    askedArtists.add(artistId);
+    return shelves[artistId] ?? const [];
+  }
+
+  @override
+  Future<SpotifyAlbumMatch?> album(String albumId) async =>
+      albumsById[albumId];
+}
+
+/// 配信リンクだけを持つ MusicBrainz。
+class FakeLinkMb extends MusicBrainzApi {
+  FakeLinkMb(this.idsByReleaseGroup);
+
+  final Map<String, List<String>> idsByReleaseGroup;
+  final List<String> asked = [];
+
+  @override
+  Future<List<String>> spotifyAlbumIds(String releaseGroupMbid) async {
+    asked.add(releaseGroupMbid);
+    return idsByReleaseGroup[releaseGroupMbid] ?? const [];
+  }
+}
+
+SpotifyAlbumMatch album(String name, {String? id}) => SpotifyAlbumMatch(
+  id: id ?? name,
+  uri: 'spotify:album:$name',
+  name: name,
+  artists: 'unused',
+  totalTracks: 1,
+);
+
+NewRelease mbRelease({required String title}) => NewRelease(
+  releaseGroupMbid: 'rg-$title',
+  title: title,
+  artistName: 'unused',
+  artistMbids: const [],
+);
 
 class _CountingFollowApi extends SpotifyApi {
   _CountingFollowApi(this.artists) : super(AuthService());

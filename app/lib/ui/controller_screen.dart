@@ -347,7 +347,12 @@ class _ControllerScreenState extends State<ControllerScreen>
     }
     controller.showToast('Spotify で探しています…');
     try {
-      final album = await widget.resolver.resolve(release);
+      final album = await widget.resolver.resolve(
+        release,
+        // 「どのアーティストの盤か」を渡せると、名前で世界中から探さずに
+        // そのアーティストの棚の中だけで突き合わせられる。
+        spotifyArtistIds: widget.newReleases.spotifyArtistIdsOf(release),
+      );
       if (!mounted) return;
       if (album == null) {
         controller.showToast('Spotify で見つかりませんでした');

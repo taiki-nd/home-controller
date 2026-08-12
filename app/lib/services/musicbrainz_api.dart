@@ -161,6 +161,50 @@ class MusicBrainzApi {
     return releases.values.toList();
   }
 
+  /// release-group にぶら下がるリリースの配信リンクから、Spotify のアルバム ID
+  /// を拾う。
+  ///
+  /// **名寄せが要らない唯一の経路。** アーティストの Spotify URL 関連
+  /// （[artistMbidsBySpotifyUrl]）と同じ仕組みが、リリース側にも付いている。
+  ///
+  /// ただし関連はボランティア入力なので、付いていない盤のほうがむしろ多い。
+  /// 出てきた ID も**版が違うことがある**（国別盤・Deluxe など、同じ
+  /// release-group の別リリースに付いた関連まで拾う）ので、呼び出し側は
+  /// これを最後の手段として扱うこと。
+  Future<List<String>> spotifyAlbumIds(String releaseGroupMbid) async {
+    if (releaseGroupMbid.isEmpty) return const [];
+    final data = await _get('/release', {
+      'release-group': releaseGroupMbid,
+      'inc': 'url-rels',
+      'limit': _releaseBatch,
+      'fmt': 'json',
+    });
+
+    final ids = <String>{};
+    for (final release
+        in (data['releases'] as List<dynamic>? ?? const [])
+            .whereType<Map<String, dynamic>>()) {
+      for (final relation
+          in (release['relations'] as List<dynamic>? ?? const [])
+              .whereType<Map<String, dynamic>>()) {
+        final url = relation['url'];
+        final resource = url is Map ? url['resource'] : null;
+        if (resource is! String) continue;
+        final match = _spotifyAlbumUrl.firstMatch(resource);
+        if (match != null) ids.add(match.group(1)!);
+      }
+    }
+    return ids.toList();
+  }
+
+  /// 1 つの release-group から見るリリースの数。版違いを全部舐める必要は無い。
+  static const _releaseBatch = 25;
+
+  /// `https://open.spotify.com/album/xxxx`。国別の `intl-ja` が挟まることがある。
+  static final _spotifyAlbumUrl = RegExp(
+    r'open\.spotify\.com/(?:intl-[a-z-]+/)?album/([A-Za-z0-9]+)',
+  );
+
   /// url 検索の応答からアーティストMBIDを1つ取り出す。
   /// 応答の形が `relations` 直下だったり `relation-list` 経由だったりする。
   static String? _firstArtistMbid(Map<String, dynamic> entry) {

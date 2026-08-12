@@ -42,6 +42,13 @@ class NewReleasesController extends ChangeNotifier {
   /// 解決できなかったアーティスト名。「なぜか出ない新譜」の説明に使う。
   List<String> _unresolvedArtists = const [];
 
+  /// artist MBID → Spotify の artist id。
+  ///
+  /// **新譜を引くのに使った対応を捨てずに残しておく。** 行を押したとき、
+  /// 「この盤を出したのは Spotify のどのアーティストか」がこれで確定するので、
+  /// 名前で世界中から探さずに済む（[ReleaseResolver] 参照）。
+  Map<String, String> _spotifyArtistIdByMbid = const {};
+
   NewReleasesStatus get status => _status;
   List<NewRelease> get releases => _releases;
   MbCoverage get coverage => _coverage;
@@ -55,6 +62,15 @@ class NewReleasesController extends ChangeNotifier {
     final now = _now();
     return _releases.where((r) => r.isUpcoming(now)).toList();
   }
+
+  /// この新譜を出したアーティストの Spotify id。
+  ///
+  /// フォローしていない共作相手は MBID しか分からないので落ちる（その盤は
+  /// フォローしている側の棚にも並ぶので、それで足りる）。
+  List<String> spotifyArtistIdsOf(NewRelease release) => release.artistMbids
+      .map((mbid) => _spotifyArtistIdByMbid[mbid])
+      .whereType<String>()
+      .toList();
 
   List<NewRelease> get released {
     final now = _now();
@@ -98,14 +114,17 @@ class NewReleasesController extends ChangeNotifier {
 
       final resolved = <String>[];
       final unresolved = <String>[];
+      final spotifyIdByMbid = <String, String>{};
       for (final artist in followed) {
         final mbid = mbidByUrl[artist.musicBrainzLookupUrl];
         if (mbid == null) {
           unresolved.add(artist.name);
         } else {
           resolved.add(mbid);
+          spotifyIdByMbid[mbid] = artist.id;
         }
       }
+      _spotifyArtistIdByMbid = spotifyIdByMbid;
       _coverage = MbCoverage(
         followed: followed.length,
         resolved: resolved.length,
@@ -176,29 +195,87 @@ class NewReleasesController extends ChangeNotifier {
 
 /// 新譜の行を Spotify で鳴らすための解決。
 ///
-/// **MusicBrainz の MBID から Spotify の URI は直接引けない。**
-/// Spotify は MBID を知らないので、アーティスト名 + タイトルの検索で当てるしか
-/// なく、リマスター・地域盤・エディション違いの表記揺れで必ず取りこぼす。
-/// リスト全体ではなく**押された行だけ**解決するのはこのコストのため。
+/// **全文検索（`/search?type=album`）は使わない。** 関連度順に並ぶだけなので、
+/// Spotify にまだ無い新譜や表記の食い違う盤では、クエリの片側しか合っていない
+/// 無関係な盤が平気で 1 位に来る。それを返すと「押したら全然違う曲が鳴る」に
+/// なり、しかも呼び出し側からは成功と区別がつかない。
+///
+/// 代わりに **ID で辿れる経路を 2 本使い、どちらも外れたら null を返す**:
+///
+/// 1. そのアーティストの Spotify の棚（`/artists/{id}/albums`）の中だけで
+///    タイトルを突き合わせる。**候補が閉じているので別アーティストを掴む事故が
+///    原理的に起きない。** アーティストの id は、新譜を引くのに使った
+///    `Spotify URL → artist MBID` の対応を逆に辿れば分かる
+///    （[NewReleasesController.spotifyArtistIdsOf]）。
+/// 2. MusicBrainz がリリースに持っている配信リンクから Spotify のアルバム id を
+///    直接拾う（[MusicBrainzApi.spotifyAlbumIds]）。**名寄せが要らない。**
+///    1 が外れるのは MB と Spotify でタイトルの表記系が違うときで、そこは
+///    こちらがちょうど強い。付いていない盤も多いので後段に置く。
+///
+/// リスト全体ではなく**押された行だけ**解決するのは、この 1〜2 リクエストを
+/// 起動時に 200 人ぶん払わないため（`MusicBrainzApi` の冒頭も参照）。
 class ReleaseResolver {
-  const ReleaseResolver(this._spotify);
+  const ReleaseResolver(this._spotify, this._musicBrainz);
 
   final SpotifyApi _spotify;
+  final MusicBrainzApi _musicBrainz;
 
   /// 見つからなければ null。
-  Future<SpotifyAlbumMatch?> resolve(NewRelease release) async {
-    final page = await _spotify.searchAlbums(
-      '${release.artistName} ${release.title}',
-    );
-    if (page.isEmpty) return null;
-
-    // 完全一致を優先し、無ければ先頭。Spotify 側の並びは関連度順。
-    final wanted = _normalize(release.title);
-    for (final album in page) {
-      if (_normalize(album.name) == wanted) return album;
+  ///
+  /// [spotifyArtistIds] は [NewReleasesController.spotifyArtistIdsOf] から渡す。
+  /// 空でも 2 本目の経路だけは試す。
+  Future<SpotifyAlbumMatch?> resolve(
+    NewRelease release, {
+    Iterable<String> spotifyArtistIds = const [],
+  }) async {
+    final title = _normalize(release.title);
+    // 記号だけのタイトルは正規化で空に潰れる。空同士を一致と見なすと
+    // 手当たり次第に当たってしまうので、名前での照合は諦める（id 直結の
+    // 2 本目はタイトルを見ないので、そちらには進む）。
+    if (title.isNotEmpty) {
+      for (final artistId in spotifyArtistIds) {
+        final shelf = await _spotify.artistAlbums(artistId);
+        final match = _pick(shelf, title);
+        if (match != null) return match;
+      }
     }
-    return page.first;
+
+    for (final albumId in await _musicBrainz.spotifyAlbumIds(
+      release.releaseGroupMbid,
+    )) {
+      final album = await _spotify.album(albumId);
+      if (album != null) return album;
+    }
+    return null;
   }
+
+  /// そのアーティストの棚からタイトルで 1 枚選ぶ。
+  static SpotifyAlbumMatch? _pick(
+    List<SpotifyAlbumMatch> shelf,
+    String title,
+  ) {
+    for (final album in shelf) {
+      if (_normalize(album.name) == title) return album;
+    }
+    // Deluxe / Remastered / "- Single" のようなエディション表記の付いた盤も
+    // 同じリリースとして拾う。**ただの前方一致では許さない** — それだと
+    // 「Best」が同じアーティストの「Best of 〜」を掴んでしまう。
+    for (final album in shelf) {
+      final name = _normalize(album.name);
+      if (!name.startsWith(title)) continue;
+      if (_edition.hasMatch(name.substring(title.length))) return album;
+    }
+    return null;
+  }
+
+  /// タイトルの後ろに付いても同じリリースと見なす語。
+  /// 正規化後に当てるので、`- Single` は `single`、`(Deluxe Edition)` は
+  /// `deluxeedition` になっている。年号はリマスター盤の `Remastered 2021`。
+  static final _edition = RegExp(
+    r'^(?:single|ep|deluxe|expanded|special|limited|complete|'
+    r'remaster(?:ed)?|anniversary|edition|version|explicit|bonustracks?|'
+    r'初回限定盤|完全生産限定盤|通常盤|限定盤|デラックス|リマスター|\d{4})+$',
+  );
 
   static String _normalize(String value) =>
       value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9぀-鿿]'), '');

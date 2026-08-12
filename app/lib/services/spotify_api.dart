@@ -165,25 +165,46 @@ class SpotifyApi {
     return SearchPage.fromJson(_asMap(response.data));
   }
 
-  /// `GET /search?type=album`。新譜（MusicBrainz 由来）を Spotify の
-  /// アルバムに引き当てるためだけに使う。
+  /// `GET /artists/{id}/albums`。新譜（MusicBrainz 由来）の行を鳴らすとき、
+  /// **そのアーティストの棚の中だけで突き合わせる**ために使う（設計メモ §14）。
+  ///
+  /// 全文検索（`/search?type=album`）は使わない。関連度順で返るだけなので、
+  /// クエリの片側しか合っていない別アーティストの盤を掴む。ここなら候補が
+  /// そのアーティストの盤に限られるので、その事故が原理的に起きない。
   ///
   /// [searchTracks] と同じく **`market=from_token` は付けない**（403 になる）。
-  /// limit 上限も同じく 10。関連度順で返るので先頭から見る。
-  Future<List<SpotifyAlbumMatch>> searchAlbums(String query) async {
-    if (query.trim().isEmpty) return const [];
+  /// 付けないぶん同じアルバムが国別に重複して返るが、呼び出し側は最初に
+  /// 当たったものを使うので困らない。
+  Future<List<SpotifyAlbumMatch>> artistAlbums(
+    String artistId, {
+    int limit = 50,
+  }) async {
+    if (artistId.isEmpty) return const [];
     final response = await _send(
       'GET',
-      '/search',
-      query: {'q': query, 'type': 'album', 'limit': 10},
+      '/artists/$artistId/albums',
+      // コンピレーションや客演（appears_on）は新譜として出していないので引かない。
+      query: {'include_groups': 'album,single', 'limit': limit},
     );
-    final block = _asMap(response.data)['albums'] as Map<String, dynamic>?;
-    final items = block?['items'] as List<dynamic>? ?? const [];
+    final items = _asMap(response.data)['items'] as List<dynamic>? ?? const [];
     return items
         .whereType<Map<String, dynamic>>()
         .map(SpotifyAlbumMatch.fromJson)
         .whereType<SpotifyAlbumMatch>()
         .toList();
+  }
+
+  /// `GET /albums/{id}`。MusicBrainz が持っている配信リンクから拾った ID を
+  /// 実体にするために使う。消えた ID なら null（404 は失敗にしない）。
+  Future<SpotifyAlbumMatch?> album(String albumId) async {
+    if (albumId.isEmpty) return null;
+    try {
+      final response = await _send('GET', '/albums/$albumId');
+      return SpotifyAlbumMatch.fromJson(_asMap(response.data));
+    } on SpotifyApiException catch (e) {
+      if (e.statusCode == 404) return null;
+      rethrow;
+    }
   }
 
   /// `GET /me/following?type=artist` を全ページ舐める。要 `user-follow-read`。

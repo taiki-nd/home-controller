@@ -33,7 +33,7 @@ class MusicSection extends ChangeNotifier {
   late final SpotifyApi _api = _injectedApi ?? SpotifyApi(_auth);
   late final MusicBrainzApi _musicBrainz =
       _injectedMusicBrainz ?? MusicBrainzApi();
-  late final ReleaseResolver _resolver = ReleaseResolver(_api);
+  late final ReleaseResolver _resolver = ReleaseResolver(_api, _musicBrainz);
 
   /// サインインするたびに作り直す。前のポーリングを確実に止めるため。
   PlayerController? _player;
