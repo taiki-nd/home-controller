@@ -55,7 +55,11 @@ class _QobuzWebLoginScreenState extends State<QobuzWebLoginScreen> {
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
       'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15';
 
-  /// この中に居る限りは自由に行き来させる。外へ出る舟だけ止める。
+  /// **本文が**この中に居る限りは自由に行き来させる。外へ出る舟だけ止める。
+  ///
+  /// ログインには Qobuz 以外のホストも要る（reCAPTCHA の google.com /
+  /// gstatic.com、SNS ログインなど）が、それらは iframe や別窓で動くので
+  /// ここには並べない——[NavigationRequest.isMainFrame] で見分ける。
   static const _allowedHosts = ['qobuz.com', 'qobuz.net'];
 
   WebViewController? _web;
@@ -92,9 +96,22 @@ class _QobuzWebLoginScreenState extends State<QobuzWebLoginScreen> {
             // **Qobuz の外へは出さない。** ここが無いと、ログインの途中で
             // Universal Link やカスタムスキーム（qobuz://）が発火して
             // ネイティブアプリに飛ばされ、この画面は空のまま取り残される。
-            onNavigationRequest: (request) => _allow(request.url)
-                ? NavigationDecision.navigate
-                : NavigationDecision.prevent,
+            //
+            // **ただし本文の遷移だけ。** 副フレームまで止めると reCAPTCHA
+            // （google.com / gstatic.com の iframe）が読めず、ログイン画面が
+            // 「reCAPTCHA サービスに接続できません」で詰む。攫われるのは
+            // 本文の遷移なので、締めるのはそこだけでいい。
+            onNavigationRequest: (request) {
+              if (!request.isMainFrame || _allow(request.url)) {
+                return NavigationDecision.navigate;
+              }
+              // **何を止めたかは残す。** ログインに要るものを巻き添えに
+              // していても、黙って落とすと画面が固まったようにしか見えない。
+              debugPrint(
+                'QobuzWebLoginScreen blocked: ${Uri.tryParse(request.url)?.host}',
+              );
+              return NavigationDecision.prevent;
+            },
             // 差し込みは「開いた直後」と「読み終わり」の両方でやる。
             // 片方だけだと、掛ける前に API を叩き終わっているページがある。
             onPageStarted: (_) => _inject(QobuzWebLogin.captureScript),

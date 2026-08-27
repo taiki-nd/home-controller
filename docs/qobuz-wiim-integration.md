@@ -137,6 +137,10 @@ Web プレイヤーが使う `app_id` を流用する。規約の想定外なの
   デスクトップ UA を名乗る（`setUserAgent`）ことと、`onNavigationRequest` で
   `qobuz.com` / `qobuz.net` 以外と非 http(s) スキームを落とすこと。
   **どちらか片方では足りない**
+- **止めるのは本文の遷移だけ**（`NavigationRequest.isMainFrame`）。副フレームまで
+  落とすと reCAPTCHA（google.com / gstatic.com の iframe）が読めず、
+  「reCAPTCHA サービスに接続できません」でログインそのものができなくなる。
+  ホスト許可リストに google を並べるのではなく、フレームで見分けること
 - 拾うのは 2 つだけ。**パスワードは見ない**（見る必要がない）
   1. `X-App-Id` / `X-User-Auth-Token` — `fetch` と `XMLHttpRequest` の
      **ヘッダと URL の両方**にフックを掛け、併せて localStorage /
