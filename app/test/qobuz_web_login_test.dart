@@ -73,6 +73,43 @@ void main() {
     });
   });
 
+  group('QobuzWebLogin.allowNavigation', () {
+    // **ここは 2 回壊している。** 緩めるとアプリに攫われ、締めると
+    // reCAPTCHA が読めない。両側を固定しておく。
+    bool main(String url) =>
+        QobuzWebLogin.allowNavigation(url, isMainFrame: true);
+    bool sub(String url) =>
+        QobuzWebLogin.allowNavigation(url, isMainFrame: false);
+
+    test('本文は Qobuz の中だけ', () {
+      expect(main('https://play.qobuz.com/login'), isTrue);
+      expect(main('https://www.qobuz.com/jp-ja/'), isTrue);
+      expect(main('https://static.qobuz.net/a.html'), isTrue);
+      expect(main('https://example.com/'), isFalse);
+      // **接尾辞だけの一致を通さない**（qobuz.com.evil.example）。
+      expect(main('https://qobuz.com.evil.example/'), isFalse);
+    });
+
+    test('副フレームはホストを問わない（reCAPTCHA が要る）', () {
+      expect(sub('https://www.google.com/recaptcha/api2/anchor'), isTrue);
+      expect(sub('https://www.gstatic.com/recaptcha/releases/x.js'), isTrue);
+    });
+
+    test('カスタムスキームはフレームを問わず落とす（アプリを起こすため）', () {
+      // 副フレームから投げられても OS はアプリを起こす。
+      // 「iframe だから安全」ではない。
+      expect(sub('qobuz://album/123'), isFalse);
+      expect(main('qobuz://album/123'), isFalse);
+      expect(sub('itms-apps://itunes.apple.com/app/id123'), isFalse);
+      expect(main('intent://qobuz.com#Intent;scheme=qobuz;end'), isFalse);
+    });
+
+    test('読めない URL は通さない', () {
+      expect(main('::::'), isFalse);
+      expect(sub(''), isFalse);
+    });
+  });
+
   group('QobuzWebMessage', () {
     test('app_id の無い auth も読む（bundle.js 側で補う）', () {
       final message = QobuzWebMessage.parse(

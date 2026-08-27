@@ -55,13 +55,6 @@ class _QobuzWebLoginScreenState extends State<QobuzWebLoginScreen> {
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
       'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15';
 
-  /// **本文が**この中に居る限りは自由に行き来させる。外へ出る舟だけ止める。
-  ///
-  /// ログインには Qobuz 以外のホストも要る（reCAPTCHA の google.com /
-  /// gstatic.com、SNS ログインなど）が、それらは iframe や別窓で動くので
-  /// ここには並べない——[NavigationRequest.isMainFrame] で見分ける。
-  static const _allowedHosts = ['qobuz.com', 'qobuz.net'];
-
   WebViewController? _web;
   Timer? _poll;
 
@@ -94,21 +87,24 @@ class _QobuzWebLoginScreenState extends State<QobuzWebLoginScreen> {
         ..setNavigationDelegate(
           NavigationDelegate(
             // **Qobuz の外へは出さない。** ここが無いと、ログインの途中で
-            // Universal Link やカスタムスキーム（qobuz://）が発火して
-            // ネイティブアプリに飛ばされ、この画面は空のまま取り残される。
-            //
-            // **ただし本文の遷移だけ。** 副フレームまで止めると reCAPTCHA
-            // （google.com / gstatic.com の iframe）が読めず、ログイン画面が
-            // 「reCAPTCHA サービスに接続できません」で詰む。攫われるのは
-            // 本文の遷移なので、締めるのはそこだけでいい。
+            // カスタムスキーム（qobuz://）が発火してネイティブアプリに
+            // 飛ばされ、この画面は空のまま取り残される。
+            // 締め方は `QobuzWebLogin.allowNavigation` を参照（スキームは
+            // フレームを問わず、ホストは本文だけ）。
             onNavigationRequest: (request) {
-              if (!request.isMainFrame || _allow(request.url)) {
+              if (QobuzWebLogin.allowNavigation(
+                request.url,
+                isMainFrame: request.isMainFrame,
+              )) {
                 return NavigationDecision.navigate;
               }
               // **何を止めたかは残す。** ログインに要るものを巻き添えに
               // していても、黙って落とすと画面が固まったようにしか見えない。
               debugPrint(
-                'QobuzWebLoginScreen blocked: ${Uri.tryParse(request.url)?.host}',
+                'QobuzWebLoginScreen blocked '
+                '(main: ${request.isMainFrame}): '
+                '${Uri.tryParse(request.url)?.scheme}://'
+                '${Uri.tryParse(request.url)?.host}',
               );
               return NavigationDecision.prevent;
             },
@@ -130,18 +126,6 @@ class _QobuzWebLoginScreenState extends State<QobuzWebLoginScreen> {
       debugPrint('QobuzWebLoginScreen setup failed: $e');
       _error = 'アプリ内ブラウザを開けませんでした';
     }
-  }
-
-  /// 進んでいい行き先か。**http(s) かつ Qobuz のドメインだけ。**
-  /// `qobuz://` のようなアプリを起こすスキームはここで落ちる。
-  static bool _allow(String url) {
-    final uri = Uri.tryParse(url);
-    if (uri == null) return false;
-    if (uri.scheme != 'http' && uri.scheme != 'https') return false;
-    final host = uri.host.toLowerCase();
-    return _allowedHosts.any(
-      (allowed) => host == allowed || host.endsWith('.$allowed'),
-    );
   }
 
   /// 定期の一舐め。

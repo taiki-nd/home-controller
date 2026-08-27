@@ -92,6 +92,35 @@ class QobuzWebLogin {
   /// `window.QobuzBridge.postMessage` の名前。
   static const channelName = 'QobuzBridge';
 
+  /// **本文が**この中に居る限りは自由に行き来させる。
+  ///
+  /// ログインには Qobuz 以外のホストも要る（reCAPTCHA の google.com /
+  /// gstatic.com、SNS ログインなど）が、それらは iframe で動くので
+  /// ここには並べない——フレームで見分ける（[allowNavigation]）。
+  static const allowedHosts = ['qobuz.com', 'qobuz.net'];
+
+  /// 進んでいい行き先か。**ここは 2 回壊しているので純粋関数にしてある。**
+  ///
+  /// 締め方を 2 段に分ける:
+  ///
+  /// 1. **スキームはフレームを問わず http(s) だけ。** `qobuz://` のような
+  ///    カスタムスキームは、**副フレームから投げられても OS がアプリを
+  ///    起こす**。「iframe だから安全」ではない——ここを開けたまま
+  ///    reCAPTCHA を通そうとして、アプリに攫われる状態に戻していた
+  /// 2. **ホストを見るのは本文だけ。** 副フレームまでホストで締めると
+  ///    reCAPTCHA（google.com / gstatic.com）が読めず、ログイン画面が
+  ///    「reCAPTCHA サービスに接続できません」で詰む
+  static bool allowNavigation(String url, {required bool isMainFrame}) {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return false;
+    if (uri.scheme != 'http' && uri.scheme != 'https') return false;
+    if (!isMainFrame) return true;
+    final host = uri.host.toLowerCase();
+    return allowedHosts.any(
+      (allowed) => host == allowed || host.endsWith('.$allowed'),
+    );
+  }
+
   static const loginUrl = QobuzBundle.loginUrl;
 
   /// ページに毎回差し込む。**何度流し込んでも二重に掛からない。**

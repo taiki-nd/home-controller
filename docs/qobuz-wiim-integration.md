@@ -137,10 +137,19 @@ Web プレイヤーが使う `app_id` を流用する。規約の想定外なの
   デスクトップ UA を名乗る（`setUserAgent`）ことと、`onNavigationRequest` で
   `qobuz.com` / `qobuz.net` 以外と非 http(s) スキームを落とすこと。
   **どちらか片方では足りない**
-- **止めるのは本文の遷移だけ**（`NavigationRequest.isMainFrame`）。副フレームまで
-  落とすと reCAPTCHA（google.com / gstatic.com の iframe）が読めず、
-  「reCAPTCHA サービスに接続できません」でログインそのものができなくなる。
-  ホスト許可リストに google を並べるのではなく、フレームで見分けること
+- **締め方は 2 段**（`QobuzWebLogin.allowNavigation`。ここは 2 回壊しているので
+  純粋関数にして `qobuz_web_login_test.dart` で両側を固定してある）:
+  1. **スキームはフレームを問わず http(s) だけ。** `qobuz://` は
+     **副フレームから投げられても OS がアプリを起こす**。「iframe だから安全」
+     ではない——ここを開けたまま reCAPTCHA を通そうとして、アプリに攫われる
+     状態に戻したことがある
+  2. **ホストを見るのは本文だけ。** 副フレームまでホストで締めると reCAPTCHA
+     （google.com / gstatic.com の iframe）が読めず、「reCAPTCHA サービスに
+     接続できません」でログインそのものができなくなる。許可リストに google を
+     並べるのではなく、フレームで見分けること
+- **アプリに渡ってしまったら、取り込みは必ず失敗する。** ネイティブアプリの
+  ログインは向こうのコンテナに入るだけで、WebView の中は未ログインのまま。
+  Web プレイヤーが動かない以上、叩く API も書かれるトークンも無い
 - 拾うのは 2 つだけ。**パスワードは見ない**（見る必要がない）
   1. `X-App-Id` / `X-User-Auth-Token` — `fetch` と `XMLHttpRequest` の
      **ヘッダと URL の両方**にフックを掛け、併せて localStorage /
