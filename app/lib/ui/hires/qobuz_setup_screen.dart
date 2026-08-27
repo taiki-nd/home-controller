@@ -1,18 +1,21 @@
 import 'package:flutter/material.dart';
 
+import '../../services/wiim_discovery.dart';
 import '../../state/qobuz_controller.dart';
 import '../../theme/tokens.dart';
 import '../widgets/atoms.dart';
+import 'qobuz_web_login_screen.dart';
 
 /// hi-res（Qobuz 直叩き + WiiM）の設定
 /// （`docs/qobuz-wiim-integration.md` §6・§7）。
 ///
 /// 立て付けは `HaSetupScreen` と同じ。入れるものは 3 つ:
 ///
-/// 1. **WiiM の IP。** DHCP 予約で固定しておく（SSDP では探さない、§5.1）
+/// 1. **WiiM。** LAN から探して一覧から選ぶ（§5.1）。手入力も残してある
 /// 2. **app_id / app_secret。** 非公式の値なのでビルドに埋めず、
-///    ここで入れるか bundle.js から取り直す（§3.2）
-/// 3. **Qobuz のログイン。** パスワードは MD5 にして送り、平文は保存しない
+///    アプリ内ブラウザか bundle.js から取る（§3.2）
+/// 3. **Qobuz のログイン。** アプリ内ブラウザか、メール + パスワード
+///    （パスワードは MD5 にして送り、平文は保存しない）
 class QobuzSetupScreen extends StatefulWidget {
   const QobuzSetupScreen({
     super.key,
@@ -62,6 +65,35 @@ class _QobuzSetupScreenState extends State<QobuzSetupScreen> {
     await widget.controller.saveWiim(_host.text);
   }
 
+  Future<void> _discover() async {
+    setState(() => _localError = null);
+    await widget.controller.discoverWiim();
+  }
+
+  /// 一覧から 1 台選ぶ。**入力欄にも反映する**——次に開いたときに
+  /// どれを選んだのかが見えるように。
+  Future<void> _select(WiimCandidate candidate) async {
+    setState(() {
+      _localError = null;
+      _host.text = candidate.host;
+    });
+    await widget.controller.selectWiim(candidate);
+  }
+
+  /// アプリ内ブラウザで Qobuz にログインし、鍵とトークンを取り込む（§3.2）。
+  Future<void> _webLogin() async {
+    setState(() => _localError = null);
+    final result = await QobuzWebLoginScreen.open(context);
+    if (!mounted || result == null) return;
+    await widget.controller.applyWebLogin(result);
+    if (!mounted) return;
+    final config = widget.controller.appConfig;
+    if (config != null) {
+      _appId.text = config.appId;
+      _appSecret.text = config.appSecret;
+    }
+  }
+
   Future<void> _saveKeys() async {
     if (_appId.text.trim().isEmpty) {
       setState(() => _localError = 'app_id を入れてください');
@@ -96,8 +128,21 @@ class _QobuzSetupScreenState extends State<QobuzSetupScreen> {
     if (mounted) _password.clear();
   }
 
+  /// **この画面自身がコントローラを購読する。**
+  ///
+  /// Drawer から `Navigator.push` で開いたときは `QobuzView` の
+  /// `ListenableBuilder` の外側に居るので、これが無いと `notifyListeners` が
+  /// どこにも届かない——「取り直す」を押しても、進行中もエラーも何も出ない
+  /// （押しても無反応に見えていたのはこれ）。
   @override
   Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: widget.controller,
+      builder: (context, _) => _build(context),
+    );
+  }
+
+  Widget _build(BuildContext context) {
     final controller = widget.controller;
     final error = _localError ?? controller.errorBanner;
     final busy = controller.busy;
@@ -160,6 +205,13 @@ class _QobuzSetupScreenState extends State<QobuzSetupScreen> {
                         // ── 1. WiiM ────────────────────────────────
                         const CapsLabel('1. WIIM', size: 10),
                         const SizedBox(height: 12),
+                        _WiimPicker(
+                          controller: controller,
+                          onDiscover: _discover,
+                          onCancel: controller.cancelDiscovery,
+                          onSelect: _select,
+                        ),
+                        const SizedBox(height: 16),
                         _Field(
                           label: 'IP アドレス',
                           hint: '192.168.1.42',
@@ -168,7 +220,8 @@ class _QobuzSetupScreenState extends State<QobuzSetupScreen> {
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          'WiiM 側は DHCP 予約で固定しておいてください。'
+                          '探して出てこなければ IP を直接入れてください'
+                          '（WiiM 側は DHCP 予約で固定しておくと確実です）。'
                           '初回は iOS が「ローカルネットワークの許可」を聞いてきます。'
                           '**ここで拒否すると無言で繋がらなくなります。**',
                           style: AppText.body(
@@ -187,6 +240,23 @@ class _QobuzSetupScreenState extends State<QobuzSetupScreen> {
                         // ── 2. app_id / app_secret ─────────────────
                         const CapsLabel('2. QOBUZ の鍵', size: 10),
                         const SizedBox(height: 12),
+                        WhiteButton(
+                          label: busy ? '取り込み中…' : 'アプリ内ブラウザでログイン',
+                          onPressed: busy ? null : _webLogin,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'いちばん確実な入口です。**鍵（2）とログイン（3）を'
+                          '一度にまとめて取り込みます。** Qobuz の Web プレイヤーに'
+                          'いつもどおりログインするだけで、このアプリは'
+                          'パスワードを見ません。',
+                          style: AppText.body(
+                            12,
+                            color: AppColors.white(0.4),
+                            height: 1.7,
+                          ),
+                        ),
+                        const SizedBox(height: 20),
                         _Field(
                           label: 'app_id',
                           hint: '数字 9 桁',
@@ -216,10 +286,11 @@ class _QobuzSetupScreenState extends State<QobuzSetupScreen> {
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          '「Web から取り直す」は play.qobuz.com の bundle.js から '
-                          'app_id と app_secret の候補を拾い、実際に再生 URL を'
-                          '取れたものだけを残します。401 や「署名が違う」が出たら'
-                          'ここを叩き直してください。',
+                          '「Web から取り直す」は play.qobuz.com の bundle.js を'
+                          '素の HTTP で読みに行きます。**Qobuz 側のボット避けで'
+                          '空振りすることがある**ので、駄目なら上のアプリ内'
+                          'ブラウザを使ってください（同じ値を本物のブラウザから'
+                          '取ります）。',
                           style: AppText.body(
                             12,
                             color: AppColors.white(0.4),
@@ -296,6 +367,125 @@ class _QobuzSetupScreenState extends State<QobuzSetupScreen> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// LAN から WiiM を探して選ばせる（§5.1）。
+///
+/// **1 台でも自動では選ばない。** 隣の部屋の別の個体や、集合住宅で隣家の
+/// WiiM が見えることがあるので、決めるのは人。
+class _WiimPicker extends StatelessWidget {
+  const _WiimPicker({
+    required this.controller,
+    required this.onDiscover,
+    required this.onCancel,
+    required this.onSelect,
+  });
+
+  final QobuzController controller;
+  final VoidCallback onDiscover;
+  final VoidCallback onCancel;
+  final ValueChanged<WiimCandidate> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final scanning = controller.scanning;
+    final candidates = controller.candidates;
+    final current = controller.wiimConnection?.host;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            OutlineButton(
+              label: scanning
+                  ? '探索中 ${(controller.scanProgress * 100).round()}%'
+                  : 'LAN から探す',
+              onPressed: scanning ? onCancel : onDiscover,
+              fontSize: 14,
+              padding: const EdgeInsets.symmetric(
+                horizontal: 18,
+                vertical: 11,
+              ),
+            ),
+            if (scanning) ...[
+              const SizedBox(width: 12),
+              Text(
+                'タップで中止',
+                style: AppText.body(12, color: AppColors.white(0.35)),
+              ),
+            ],
+          ],
+        ),
+        if (candidates.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          for (final candidate in candidates)
+            _CandidateRow(
+              candidate: candidate,
+              selected: candidate.host == current,
+              onTap: () => onSelect(candidate),
+            ),
+        ],
+      ],
+    );
+  }
+}
+
+class _CandidateRow extends StatelessWidget {
+  const _CandidateRow({
+    required this.candidate,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final WiimCandidate candidate;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: AppColors.white(selected ? 0.12 : 0.06),
+        borderRadius: AppRadius.row,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: AppRadius.row,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(
+              children: [
+                Icon(
+                  selected ? Icons.check_circle : Icons.speaker,
+                  size: 18,
+                  color: selected ? AppColors.green : AppColors.white(0.45),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        candidate.label,
+                        style: AppText.body(15, color: Colors.white),
+                      ),
+                      Text(
+                        [
+                          candidate.host,
+                          ?candidate.device.model,
+                        ].join(' · '),
+                        style: AppText.body(12, color: AppColors.white(0.45)),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );

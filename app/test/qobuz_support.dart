@@ -82,8 +82,23 @@ class FakeQobuzApi extends QobuzApi {
   /// これを立てると `fileUrl` が転ぶ（鳴らせない曲の再現）。
   final failingTrackIds = <int>{};
 
+  /// これを入れると、**この app_secret のときだけ** `fileUrl` が通る。
+  /// bundle.js の候補を総当りする経路（`_pickSecret`）の再現用。
+  String? winningSecret;
+
+  /// `currentUser` が返す人。
+  QobuzUser user = const QobuzUser(
+    id: 42,
+    token: 'token-xxx',
+    displayName: 'わたし',
+    subscription: 'Studio',
+  );
+
   @override
   Future<void> verifyToken() async {}
+
+  @override
+  Future<QobuzUser> currentUser() async => user;
 
   @override
   Future<QobuzSearchResults> search(String query, {int limit = 30}) async =>
@@ -105,6 +120,9 @@ class FakeQobuzApi extends QobuzApi {
     fileUrlCalls.add(trackId);
     if (failingTrackIds.contains(trackId)) {
       throw QobuzException('この曲は再生できません');
+    }
+    if (winningSecret != null && config?.appSecret != winningSecret) {
+      throw QobuzAppException('invalid signature');
     }
     return QobuzFileUrl(
       trackId: trackId,

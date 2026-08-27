@@ -34,6 +34,11 @@ dependencies:
   # アートワークから背景色を抽出する（Spotify デザインガイドライン上、
   # アートワーク自体の改変はできないので「色を採るだけ」に留める）。
   palette_generator: ^0.3.3+7
+  # Qobuz のログインをアプリ内ブラウザで済ませるため
+  # （docs/qobuz-wiim-integration.md §3.2）。素の HTTP で play.qobuz.com を
+  # 舐める経路はボット避けで空振りすることがあり、本物のブラウザなら詰まらない。
+  # **web ビルドには実装が無い。** 画面側で kIsWeb を見て逃がしている。
+  webview_flutter: ^4.14.1
   provider: ^6.1.2
   cupertino_icons: ^1.0.8
   # Home Assistant の WebSocket API（/api/websocket）。状態はプッシュで届くので

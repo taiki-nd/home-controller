@@ -3,10 +3,10 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 /// WiiM の在り処。
 ///
-/// **SSDP では探さない**（`docs/qobuz-wiim-integration.md` §5）。
+/// **SSDP でも mDNS でも探さない**（`docs/qobuz-wiim-integration.md` §5.1）。
 /// iOS でマルチキャストを使うには `com.apple.developer.networking.multicast`
-/// が要り、Apple の申請と承認が必要になる。DHCP 予約で固定した IP を手で
-/// 入れるほうが、個人利用では確実で速い。
+/// が要り、Apple の申請と承認が必要になる。探すのは `WiimDiscovery` が
+/// /24 をユニキャストで舐める形で、ここに入るのはその結果か手入力の値。
 @immutable
 class WiimConnection {
   const WiimConnection({required this.host});
