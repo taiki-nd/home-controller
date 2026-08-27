@@ -58,6 +58,12 @@ class _QobuzWebLoginScreenState extends State<QobuzWebLoginScreen> {
   WebViewController? _web;
   Timer? _poll;
 
+  /// 自分で読み直すと決めた 1 件（[_open] 参照）。
+  ///
+  /// **自分の `loadRequest` も `onNavigationRequest` に返ってくる**ので、
+  /// これが無いと止めては開き直すのを永遠に繰り返す。
+  String? _passthrough;
+
   String? _appId;
   String? _token;
   bool _harvesting = false;
@@ -92,10 +98,28 @@ class _QobuzWebLoginScreenState extends State<QobuzWebLoginScreen> {
             // 締め方は `QobuzWebLogin.allowNavigation` を参照（スキームは
             // フレームを問わず、ホストは本文だけ）。
             onNavigationRequest: (request) {
+              // 自分で開き直した分。ここは素通しでいい。
+              if (request.url == _passthrough) {
+                _passthrough = null;
+                return NavigationDecision.navigate;
+              }
               if (QobuzWebLogin.allowNavigation(
                 request.url,
                 isMainFrame: request.isMainFrame,
               )) {
+                // **本文の遷移は、通す代わりに自分で開き直す。**
+                //
+                // ここを素直に navigate すると、iOS が「利用者が踏んだ
+                // リンク」と見なして Universal Link の判定に掛け、
+                // qobuz.com が Qobuz アプリの関連ドメインに入っているため
+                // ネイティブアプリに渡してしまう（ログイン直後の遷移で
+                // これが起きる）。**プログラムからの読み込みは渡らない**
+                // ので、いったん止めて同じ URL を自分で開く。
+                //
+                // 本文の POST は捨てることになるが、Qobuz のログインは
+                // XHR で飛ぶ（だからトークンを横取りできている）ので、
+                // ここを通るのは実質 GET だけ。
+                if (request.isMainFrame) return _open(request.url);
                 return NavigationDecision.navigate;
               }
               // **何を止めたかは残す。** ログインに要るものを巻き添えに
@@ -126,6 +150,15 @@ class _QobuzWebLoginScreenState extends State<QobuzWebLoginScreen> {
       debugPrint('QobuzWebLoginScreen setup failed: $e');
       _error = 'アプリ内ブラウザを開けませんでした';
     }
+  }
+
+  /// いったん止めて、同じ URL を自分で開き直す。**Universal Link 外し。**
+  NavigationDecision _open(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return NavigationDecision.prevent;
+    _passthrough = url;
+    _web?.loadRequest(uri);
+    return NavigationDecision.prevent;
   }
 
   /// 定期の一舐め。
