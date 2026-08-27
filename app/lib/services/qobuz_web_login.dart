@@ -98,9 +98,12 @@ class QobuzWebLogin {
   ///
   /// やることは 2 つ:
   ///
-  /// - `fetch` / `XMLHttpRequest` のヘッダを覗いて `X-App-Id` と
-  ///   `X-User-Auth-Token` を拾う（Web プレイヤーは操作のたびに API を叩くので、
-  ///   途中から掛けても次の 1 回で捕まる）
+  /// - `fetch` / `XMLHttpRequest` の**ヘッダと URL の両方**を覗いて
+  ///   `X-App-Id` と `X-User-Auth-Token` を拾う（Web プレイヤーは操作のたびに
+  ///   API を叩くので、途中から掛けても次の 1 回で捕まる）。
+  ///   **URL を見るのが要**——Qobuz は `app_id` をヘッダではなく
+  ///   `?app_id=…` のクエリで送ることがあり、ヘッダだけ見ていると
+  ///   トークンは取れるのに app_id だけ永遠に埋まらない
   /// - localStorage / sessionStorage を舐めて同じ 2 つを探す
   ///   （**キー名を決め打ちしない**——Qobuz 側の都合で変わるので、
   ///   入れ子の JSON まで降りて名前で拾う）
@@ -120,7 +123,11 @@ const _captureScript = r'''
   if (!B) {
     B = window.__homeCtlQobuz = { appId: null, token: null };
     B.post = function () {
-      if (B.appId && B.token) {
+      // **app_id が揃うのを待たない。** トークンさえ取れていれば送る——
+      // app_id は bundle.js 側にも書いてあるので Dart 側で補える。
+      // 両方揃うまで黙っていると、app_id だけ拾えないページで
+      // 永遠に何も起きない画面になる。
+      if (B.token) {
         QobuzBridge.postMessage(
           JSON.stringify({ type: 'auth', appId: B.appId, token: B.token })
         );
@@ -139,6 +146,21 @@ const _captureScript = r'''
         return;
       }
       B.post();
+    };
+    B.query = function (u) {
+      // `?app_id=…&user_auth_token=…`。**ヘッダに出ない口がここにある。**
+      if (!u) return;
+      try {
+        var text = String(u);
+        var mark = text.indexOf('?');
+        if (mark < 0) return;
+        var parts = text.slice(mark + 1).split('&');
+        for (var i = 0; i < parts.length; i++) {
+          var pair = parts[i].split('=');
+          if (pair.length < 2) continue;
+          B.take(decodeURIComponent(pair[0]), decodeURIComponent(pair[1]));
+        }
+      } catch (e) {}
     };
     B.headers = function (h) {
       if (!h) return;
@@ -159,10 +181,16 @@ const _captureScript = r'''
         try {
           if (init) B.headers(init.headers);
           if (input && input.headers) B.headers(input.headers);
+          B.query(typeof input === 'string' ? input : input && input.url);
         } catch (e) {}
         return fetchOriginal.apply(this, arguments);
       };
     }
+    var openOriginal = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function (method, url) {
+      try { B.query(url); } catch (e) {}
+      return openOriginal.apply(this, arguments);
+    };
     var setHeaderOriginal = XMLHttpRequest.prototype.setRequestHeader;
     XMLHttpRequest.prototype.setRequestHeader = function (key, value) {
       try { B.take(key, value); } catch (e) {}
@@ -184,6 +212,13 @@ const _captureScript = r'''
       }
     };
     B.scan = function () {
+      // **掛ける前に済んでいた通信も拾う。** SPA は起動直後に API を叩くので、
+      // フックが間に合わないことがある。performance には URL が残っていて、
+      // app_id はそこ（クエリ）にも書いてある。
+      try {
+        var entries = performance.getEntriesByType('resource');
+        for (var e = 0; e < entries.length; e++) B.query(entries[e].name);
+      } catch (e) {}
       var stores = [];
       try { stores.push(window.localStorage); } catch (e) {}
       try { stores.push(window.sessionStorage); } catch (e) {}
@@ -241,6 +276,12 @@ const _bundleScript = r'''
     }
   }
   if (src) { grab(src).catch(fail); return; }
+  // script タグで見つからないとき。**いま開いているページの HTML を先に見る**
+  // ——ログイン後は /login を取り直しても中身が変わっていることがある。
+  var inline = document.documentElement.innerHTML.match(
+    /\/resources\/[^"']+\/bundle\.js/
+  );
+  if (inline) { grab(location.origin + inline[0]).catch(fail); return; }
   fetch('/login', { credentials: 'include' })
     .then(function (r) { return r.text(); })
     .then(function (html) {

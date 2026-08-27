@@ -56,9 +56,33 @@ void main() {
       expect(QobuzWebLogin.captureScript, contains('__homeCtlQobuz'));
       expect(QobuzWebLogin.captureScript, contains(QobuzWebLogin.channelName));
     });
+
+    test('ヘッダだけでなく URL のクエリも見る', () {
+      // Qobuz は app_id を `?app_id=…` で送ることがあり、ヘッダだけ見ていると
+      // トークンは取れるのに app_id が永遠に埋まらない。
+      final script = QobuzWebLogin.captureScript;
+      expect(script, contains('B.query'));
+      expect(script, contains('XMLHttpRequest.prototype.open'));
+      expect(script, contains('getEntriesByType'));
+    });
+
+    test('app_id が揃うのを待たずにトークンを渡す', () {
+      // 待つと、app_id を拾えないページで永遠に何も起きない画面になる。
+      expect(QobuzWebLogin.captureScript, contains('if (B.token) {'));
+      expect(QobuzWebLogin.captureScript, isNot(contains('B.appId && B.token')));
+    });
   });
 
   group('QobuzWebMessage', () {
+    test('app_id の無い auth も読む（bundle.js 側で補う）', () {
+      final message = QobuzWebMessage.parse(
+        '{"type":"auth","token":"abcdefghijklmnopqrst"}',
+      );
+      expect(message!.isAuth, isTrue);
+      expect(message.appId, isNull);
+      expect(message.token, 'abcdefghijklmnopqrst');
+    });
+
     test('auth を読む', () {
       final message = QobuzWebMessage.parse(
         '{"type":"auth","appId":"798273057","token":"abcdefghijklmnopqrst"}',

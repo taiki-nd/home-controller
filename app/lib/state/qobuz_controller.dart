@@ -446,6 +446,11 @@ class QobuzController extends ChangeNotifier {
   /// **ログイン画面の入力より優先する。** Web プレイヤー自身が使っている
   /// app_id とトークンなので、少なくともその瞬間は必ず通る組み合わせ。
   /// user_id だけは付いてこないので `user/get` で引き直す。
+  ///
+  /// **ログインを先に確定させる。** 以前は app_secret の総当りを先にやって
+  /// いて、候補が 1 本も通らないと有効なトークンごと捨てていた——
+  /// 「ブラウザでログインしたのに、まだログインを求められる」の正体がこれ。
+  /// 秘密が取れるかどうかは再生できるかの話で、ログイン済みかどうかとは別。
   Future<void> applyWebLogin(QobuzWebLoginResult result) async {
     if (result.appId.isEmpty || result.token.isEmpty) {
       _fail('ブラウザから鍵とトークンを取れませんでした');
@@ -455,15 +460,12 @@ class QobuzController extends ChangeNotifier {
     _error = null;
     notifyListeners();
     try {
+      // 1. まずログイン。署名が要らないので app_secret はまだ無くていい。
       _api.token = result.token;
-      // 候補が空でも止めない。**トークンだけでも検索とブラウズは動く**ので、
-      // 手で入れてある app_secret を残したまま先へ進める。
-      final secret = await _pickSecret(
-        result.appId,
-        result.secrets,
-        fallback: _app?.appSecret,
+      _api.config = QobuzAppConfig(
+        appId: result.appId,
+        appSecret: _app?.appSecret ?? '',
       );
-      await saveAppConfig(result.appId, secret);
       final user = await _api.currentUser();
       final account = QobuzAccount(
         token: result.token,
@@ -473,8 +475,36 @@ class QobuzController extends ChangeNotifier {
       );
       await _credentials.saveAccount(account);
       _account = account;
-      _toast = 'Qobuz の鍵とログインを取り込みました';
+
+      // 2. 次に鍵。**ここで転んでも 1. は残す。**
+      String? keyError;
+      try {
+        final secret = await _pickSecret(
+          result.appId,
+          result.secrets,
+          fallback: _app?.appSecret,
+        );
+        await saveAppConfig(result.appId, secret);
+      } on QobuzException catch (e) {
+        keyError = e.message;
+        // 前の app_id / app_secret は組で意味を持つので、崩さず元に戻す。
+        // ただし**まだ何も無いとき**は app_id だけでも残す——検索とブラウズは
+        // 署名が要らないので、それだけで動く。
+        if (_app == null || _app!.appId.isEmpty) {
+          await saveAppConfig(result.appId, '');
+        } else {
+          _api.config = _app;
+        }
+      }
+
       await _connect();
+      if (keyError == null) {
+        _toast = 'Qobuz の鍵とログインを取り込みました';
+      } else {
+        _toast = 'Qobuz にログインしました（app_secret はまだです）';
+        _error = '$keyError。ログインは取り込めているので、'
+            '「Web から取り直す」か手入力で app_secret だけ入れてください';
+      }
     } on QobuzException catch (e) {
       _api.config = _app;
       _api.token = _account?.token;

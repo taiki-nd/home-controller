@@ -125,18 +125,41 @@ void main() {
       expect(controller.busy, isFalse);
     });
 
-    test('候補がどれも通らなければ、前の設定に戻して知らせる', () async {
-      final (:controller, :api, credentials: _) = build();
+    test('候補がどれも通らなくても、ログインだけは残す', () async {
+      final (:controller, :api, :credentials) = build();
       addTearDown(controller.dispose);
       api.searchResults = QobuzSearchResults(tracks: [track(7)]);
       api.winningSecret = 'どれでもない';
+      api.user = const QobuzUser(id: 1234, token: 'web-token');
       await controller.start();
 
       await controller.applyWebLogin(result);
 
-      expect(controller.errorBanner, contains('app_secret'));
+      // 鍵は組で意味を持つので、通らなかったら前のまま戻す。
       expect(controller.appConfig, testAppConfig);
+      expect(controller.errorBanner, contains('app_secret'));
+      // **ここが肝。** 以前はトークンごと捨てていて、ブラウザでログイン
+      // したのにもう一度ログインを求められていた。
+      expect(controller.isSignedIn, isTrue);
+      expect(credentials.account?.token, 'web-token');
       expect(controller.busy, isFalse);
+    });
+
+    test('まだ何も無いときは、通らなくても app_id だけ残す（検索は動く）', () async {
+      final (:controller, :api, :credentials) = build(app: null, account: null);
+      addTearDown(controller.dispose);
+      api.searchResults = QobuzSearchResults(tracks: [track(7)]);
+      api.winningSecret = 'どれでもない';
+      api.user = const QobuzUser(id: 1234, token: 'web-token');
+      await controller.start();
+
+      await controller.applyWebLogin(result);
+
+      expect(controller.appConfig?.appId, '798273057');
+      expect(controller.appConfig?.appSecret, isEmpty);
+      expect(controller.isSignedIn, isTrue);
+      expect(credentials.account?.token, 'web-token');
+      expect(controller.errorBanner, contains('app_secret'));
     });
 
     test('秘密が取れなくても、いまの app_secret のままトークンだけ入れ替える', () async {

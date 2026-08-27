@@ -50,6 +50,9 @@ class _QobuzSetupScreenState extends State<QobuzSetupScreen> {
 
   String? _localError;
 
+  /// 逃げ道（手入力・メールログイン）を開いているか。**既定は畳む。**
+  bool _manual = false;
+
   @override
   void dispose() {
     _host.dispose();
@@ -237,93 +240,134 @@ class _QobuzSetupScreenState extends State<QobuzSetupScreen> {
                         ),
                         const SizedBox(height: 28),
 
-                        // ── 2. app_id / app_secret ─────────────────
-                        const CapsLabel('2. QOBUZ の鍵', size: 10),
+                        // ── 2. Qobuz ───────────────────────────────
+                        //
+                        // **入口はアプリ内ブラウザ 1 つ。** 鍵もログインも
+                        // ここで一度に揃う。以前は「2. 鍵」「3. ログイン」と
+                        // 2 段に見せていたが、実際にやることは 1 回なので
+                        // 段を分けるほど手数が増えたように見えていた。
+                        const CapsLabel('2. QOBUZ', size: 10),
                         const SizedBox(height: 12),
+                        _QobuzState(controller: controller),
+                        const SizedBox(height: 16),
                         WhiteButton(
-                          label: busy ? '取り込み中…' : 'アプリ内ブラウザでログイン',
+                          label: busy
+                              ? '取り込み中…'
+                              : (controller.isSignedIn
+                                    ? 'アプリ内ブラウザで取り直す'
+                                    : 'アプリ内ブラウザでログイン'),
                           onPressed: busy ? null : _webLogin,
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          'いちばん確実な入口です。**鍵（2）とログイン（3）を'
-                          '一度にまとめて取り込みます。** Qobuz の Web プレイヤーに'
-                          'いつもどおりログインするだけで、このアプリは'
-                          'パスワードを見ません。',
+                          'Qobuz の Web プレイヤーにいつもどおりログインする'
+                          'だけです。**鍵とログインを一度にまとめて取り込みます。**'
+                          'このアプリはパスワードを見ません。',
                           style: AppText.body(
                             12,
                             color: AppColors.white(0.4),
                             height: 1.7,
                           ),
                         ),
-                        const SizedBox(height: 20),
-                        _Field(
-                          label: 'app_id',
-                          hint: '数字 9 桁',
-                          controller: _appId,
-                          keyboardType: TextInputType.number,
-                        ),
-                        const SizedBox(height: 16),
-                        _Field(
-                          label: 'app_secret',
-                          hint: 'bundle.js から取り直せます',
-                          controller: _appSecret,
-                          obscure: true,
-                        ),
-                        const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            OutlineButton(
-                              label: '保存',
-                              onPressed: busy ? null : _saveKeys,
-                            ),
-                            const SizedBox(width: 12),
-                            OutlineButton(
-                              label: busy ? '取得中…' : 'Web から取り直す',
-                              onPressed: busy ? null : _refreshKeys,
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          '「Web から取り直す」は play.qobuz.com の bundle.js を'
-                          '素の HTTP で読みに行きます。**Qobuz 側のボット避けで'
-                          '空振りすることがある**ので、駄目なら上のアプリ内'
-                          'ブラウザを使ってください（同じ値を本物のブラウザから'
-                          '取ります）。',
-                          style: AppText.body(
-                            12,
-                            color: AppColors.white(0.4),
-                            height: 1.7,
-                          ),
-                        ),
-                        const SizedBox(height: 28),
-
-                        // ── 3. ログイン ────────────────────────────
-                        const CapsLabel('3. QOBUZ のログイン', size: 10),
-                        const SizedBox(height: 12),
-                        if (controller.isSignedIn)
-                          _SignedIn(controller: controller)
-                        else ...[
-                          _Field(
-                            label: 'メールアドレス',
-                            hint: 'you@example.com',
-                            controller: _email,
-                            keyboardType: TextInputType.emailAddress,
-                          ),
-                          const SizedBox(height: 16),
-                          _Field(
-                            label: 'パスワード',
-                            hint: '',
-                            controller: _password,
-                            obscure: true,
-                          ),
+                        if (controller.isSignedIn) ...[
                           const SizedBox(height: 12),
-                          WhiteButton(
-                            label: busy ? 'ログイン中…' : 'ログイン',
-                            onPressed: busy ? null : _login,
+                          OutlineButton(
+                            label: 'ログアウト',
+                            onPressed: busy ? null : controller.logout,
                           ),
                         ],
+                        const SizedBox(height: 20),
+
+                        // ── 逃げ道 ─────────────────────────────────
+                        //
+                        // **畳んでおく。** 手入力もメール + パスワードも、
+                        // ブラウザ経路が転んだときにしか要らない。
+                        _Disclosure(
+                          label: 'うまくいかないときは',
+                          open: _manual,
+                          onToggle: () => setState(() => _manual = !_manual),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const SizedBox(height: 16),
+                              const CapsLabel('鍵を手で入れる', size: 10),
+                              const SizedBox(height: 12),
+                              _Field(
+                                label: 'app_id',
+                                hint: '数字 9 桁',
+                                controller: _appId,
+                                keyboardType: TextInputType.number,
+                              ),
+                              const SizedBox(height: 16),
+                              _Field(
+                                label: 'app_secret',
+                                hint: 'bundle.js から取り直せます',
+                                controller: _appSecret,
+                                obscure: true,
+                              ),
+                              const SizedBox(height: 12),
+                              Row(
+                                children: [
+                                  OutlineButton(
+                                    label: '保存',
+                                    onPressed: busy ? null : _saveKeys,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  OutlineButton(
+                                    label: busy ? '取得中…' : 'Web から取り直す',
+                                    onPressed: busy ? null : _refreshKeys,
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                '「Web から取り直す」は play.qobuz.com の '
+                                'bundle.js を素の HTTP で読みに行きます。'
+                                '**Qobuz 側のボット避けで空振りすることがある**'
+                                'ので、基本は上のアプリ内ブラウザを使ってください。',
+                                style: AppText.body(
+                                  12,
+                                  color: AppColors.white(0.4),
+                                  height: 1.7,
+                                ),
+                              ),
+                              if (!controller.isSignedIn) ...[
+                                const SizedBox(height: 24),
+                                const CapsLabel('メールとパスワードで入る', size: 10),
+                                const SizedBox(height: 12),
+                                _Field(
+                                  label: 'メールアドレス',
+                                  hint: 'you@example.com',
+                                  controller: _email,
+                                  keyboardType: TextInputType.emailAddress,
+                                ),
+                                const SizedBox(height: 16),
+                                _Field(
+                                  label: 'パスワード',
+                                  hint: '',
+                                  controller: _password,
+                                  obscure: true,
+                                ),
+                                const SizedBox(height: 12),
+                                WhiteButton(
+                                  label: busy ? 'ログイン中…' : 'ログイン',
+                                  onPressed: busy ? null : _login,
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  '先に app_id / app_secret が要ります。'
+                                  'パスワードは MD5 にして送り、端末には残しません。',
+                                  style: AppText.body(
+                                    12,
+                                    color: AppColors.white(0.4),
+                                    height: 1.7,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 8),
 
                         if (error != null) ...[
                           const SizedBox(height: 20),
@@ -492,35 +536,123 @@ class _CandidateRow extends StatelessWidget {
   }
 }
 
-class _SignedIn extends StatelessWidget {
-  const _SignedIn({required this.controller});
+/// いま何が揃っていて何が足りないかを 2 行で見せる。
+///
+/// **「ログイン済みか」と「鍵が揃っているか」は別の話。** ここを 1 つの
+/// 見出しに混ぜていたせいで、ログインは取り込めているのに設定画面が
+/// 未設定にしか見えず、もう一度ログインさせられているように感じていた。
+class _QobuzState extends StatelessWidget {
+  const _QobuzState({required this.controller});
 
   final QobuzController controller;
 
   @override
   Widget build(BuildContext context) {
     final account = controller.account;
-    return Row(
+    final config = controller.appConfig;
+    final hasSecret = config?.isComplete ?? false;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Icon(Icons.check_circle, size: 18, color: AppColors.green),
+        _StateRow(
+          ok: controller.isSignedIn,
+          title: controller.isSignedIn
+              ? (account?.displayName ?? 'ログイン済み')
+              : 'ログインしていません',
+          subtitle: controller.isSignedIn ? account?.subscription : null,
+        ),
+        const SizedBox(height: 10),
+        _StateRow(
+          ok: hasSecret,
+          title: hasSecret ? '鍵は揃っています' : 'app_secret がまだです',
+          subtitle: hasSecret
+              ? 'app_id ${config!.appId}'
+              : (config?.appId.isNotEmpty ?? false)
+              // **ここが分かれ目。** 検索とブラウズは署名が要らないので
+              // app_id だけでも動く。止まるのは再生だけ。
+              ? '検索とブラウズは動きますが、再生できません'
+              : '取り込むとここが埋まります',
+        ),
+      ],
+    );
+  }
+}
+
+class _StateRow extends StatelessWidget {
+  const _StateRow({required this.ok, required this.title, this.subtitle});
+
+  final bool ok;
+  final String title;
+  final String? subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final subtitle = this.subtitle;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(
+          ok ? Icons.check_circle : Icons.radio_button_unchecked,
+          size: 18,
+          color: ok ? AppColors.green : AppColors.white(0.3),
+        ),
         const SizedBox(width: 10),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                account?.displayName ?? 'ログイン済み',
-                style: AppText.body(15, color: Colors.white),
-              ),
-              if (account?.subscription != null)
+              Text(title, style: AppText.body(15, color: Colors.white)),
+              if (subtitle != null && subtitle.isNotEmpty)
                 Text(
-                  account!.subscription!,
+                  subtitle,
                   style: AppText.body(12, color: AppColors.white(0.45)),
                 ),
             ],
           ),
         ),
-        OutlineButton(label: 'ログアウト', onPressed: controller.logout),
+      ],
+    );
+  }
+}
+
+/// 畳んでおける一塊。
+class _Disclosure extends StatelessWidget {
+  const _Disclosure({
+    required this.label,
+    required this.open,
+    required this.onToggle,
+    required this.child,
+  });
+
+  final String label;
+  final bool open;
+  final VoidCallback onToggle;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        GestureDetector(
+          onTap: onToggle,
+          behavior: HitTestBehavior.opaque,
+          child: Row(
+            children: [
+              Icon(
+                open ? Icons.expand_less : Icons.expand_more,
+                size: 18,
+                color: AppColors.white(0.5),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: AppText.body(13, color: AppColors.white(0.55)),
+              ),
+            ],
+          ),
+        ),
+        if (open) child,
       ],
     );
   }

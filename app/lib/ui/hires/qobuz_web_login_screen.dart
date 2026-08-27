@@ -44,6 +44,20 @@ class _QobuzWebLoginScreenState extends State<QobuzWebLoginScreen> {
   /// 定期的に舐め直すのがいちばん確実。
   static const _pollInterval = Duration(seconds: 2);
 
+  /// アプリへ攫われないための UA。
+  ///
+  /// **既定の WKWebView は iPhone の Safari を名乗る。** すると
+  /// play.qobuz.com は「アプリで開く」バナーと Universal Link を出してきて、
+  /// ログインの途中で Qobuz のネイティブアプリに持っていかれる。
+  /// デスクトップを名乗れば誘導ごと消え、ついでに bundle.js が確実に載る
+  /// フル版の Web プレイヤーが返ってくる（鍵の取り込みはこれに乗っている）。
+  static const _desktopUserAgent =
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+      'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15';
+
+  /// この中に居る限りは自由に行き来させる。外へ出る舟だけ止める。
+  static const _allowedHosts = ['qobuz.com', 'qobuz.net'];
+
   WebViewController? _web;
   Timer? _poll;
 
@@ -72,8 +86,15 @@ class _QobuzWebLoginScreenState extends State<QobuzWebLoginScreen> {
           QobuzWebLogin.channelName,
           onMessageReceived: (message) => _onMessage(message.message),
         )
+        ..setUserAgent(_desktopUserAgent)
         ..setNavigationDelegate(
           NavigationDelegate(
+            // **Qobuz の外へは出さない。** ここが無いと、ログインの途中で
+            // Universal Link やカスタムスキーム（qobuz://）が発火して
+            // ネイティブアプリに飛ばされ、この画面は空のまま取り残される。
+            onNavigationRequest: (request) => _allow(request.url)
+                ? NavigationDecision.navigate
+                : NavigationDecision.prevent,
             // 差し込みは「開いた直後」と「読み終わり」の両方でやる。
             // 片方だけだと、掛ける前に API を叩き終わっているページがある。
             onPageStarted: (_) => _inject(QobuzWebLogin.captureScript),
@@ -87,14 +108,37 @@ class _QobuzWebLoginScreenState extends State<QobuzWebLoginScreen> {
           ),
         )
         ..loadRequest(Uri.parse(QobuzWebLogin.loginUrl));
-      _poll = Timer.periodic(
-        _pollInterval,
-        (_) => _inject(QobuzWebLogin.captureScript),
-      );
+      _poll = Timer.periodic(_pollInterval, (_) => _sweep());
     } catch (e) {
       debugPrint('QobuzWebLoginScreen setup failed: $e');
       _error = 'アプリ内ブラウザを開けませんでした';
     }
+  }
+
+  /// 進んでいい行き先か。**http(s) かつ Qobuz のドメインだけ。**
+  /// `qobuz://` のようなアプリを起こすスキームはここで落ちる。
+  static bool _allow(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return false;
+    if (uri.scheme != 'http' && uri.scheme != 'https') return false;
+    final host = uri.host.toLowerCase();
+    return _allowedHosts.any(
+      (allowed) => host == allowed || host.endsWith('.$allowed'),
+    );
+  }
+
+  /// 定期の一舐め。
+  ///
+  /// **bundle.js も取り直す。** トークンは取れたのに app_id が拾えていない
+  /// ときは、ページが進めば読める場所が変わることがあるので、諦めずに
+  /// 掛け直す（[_finish] が空振りしたときの受け皿）。
+  void _sweep() {
+    _inject(QobuzWebLogin.captureScript);
+    if (_done || _harvesting) return;
+    if (_token == null) return;
+    if (_appId?.isNotEmpty ?? false) return;
+    _harvesting = true;
+    _inject(QobuzWebLogin.bundleScript);
   }
 
   Future<void> _inject(String script) async {
@@ -112,9 +156,11 @@ class _QobuzWebLoginScreenState extends State<QobuzWebLoginScreen> {
     final message = QobuzWebMessage.parse(raw);
     if (message == null || _done) return;
     if (message.isAuth) {
-      final appId = message.appId;
       final token = message.token;
-      if (appId == null || token == null) return;
+      // **トークンだけで先へ進む。** app_id が付いてこないことがあるので
+      // 揃うまで待たない——bundle.js 側の app_id で補える（[_finish]）。
+      if (token == null) return;
+      final appId = message.appId ?? _appId;
       if (_appId == appId && _token == token) return;
       setState(() {
         _appId = appId;
@@ -129,7 +175,7 @@ class _QobuzWebLoginScreenState extends State<QobuzWebLoginScreen> {
     }
     if (message.isBundle) {
       final keys = QobuzBundle.extract(message.bundle ?? '');
-      _finish(secrets: keys.secrets);
+      _finish(secrets: keys.secrets, fallbackAppId: keys.appId);
       return;
     }
     if (message.isError) {
@@ -139,10 +185,26 @@ class _QobuzWebLoginScreenState extends State<QobuzWebLoginScreen> {
     }
   }
 
-  void _finish({required List<String> secrets}) {
-    final appId = _appId;
+  /// 持ち帰って閉じる。
+  ///
+  /// [fallbackAppId] は bundle.js から読めた `app_id`。**通信から拾えなかった
+  /// ときの補い**で、ヘッダにもクエリにも出てこないページで効く。
+  void _finish({required List<String> secrets, String? fallbackAppId}) {
+    final appId = (_appId?.isNotEmpty ?? false) ? _appId! : (fallbackAppId ?? '');
     final token = _token;
-    if (appId == null || token == null || _done) return;
+    if (token == null || _done) return;
+    if (appId.isEmpty) {
+      // **黙って閉じない。** ここで pop すると設定画面には何も起きず、
+      // 「ログインしたのに無反応」にしか見えない。
+      if (!mounted) return;
+      setState(() {
+        _harvesting = false;
+        _error = 'ログインは取れましたが app_id を拾えませんでした。'
+            'Web プレイヤーの中を少し操作して（アルバムを開くなど）'
+            'ください。もう一度探します';
+      });
+      return;
+    }
     _done = true;
     _poll?.cancel();
     if (!mounted) return;
