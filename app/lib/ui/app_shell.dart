@@ -3,11 +3,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../state/home_controller.dart';
-import '../state/ma_controller.dart';
 import '../state/music_section.dart';
+import '../state/qobuz_controller.dart';
 import '../theme/tokens.dart';
-import 'assistant/ma_setup_screen.dart';
-import 'assistant/ma_view.dart';
+import 'hires/qobuz_setup_screen.dart';
+import 'hires/qobuz_view.dart';
 import 'home/ha_setup_screen.dart';
 import 'home/home_screen.dart';
 import 'music/music_view.dart';
@@ -29,10 +29,11 @@ class AppShell extends StatefulWidget {
   /// null なら music を出さない（`ENABLE_MUSIC=false` の公開ビルド）。
   final MusicSection? music;
 
-  /// Music Assistant（Qobuz を WiiM で鳴らす側）。music と同じフラグで出す
-  /// ——どちらも音楽サービスに繋ぐ内輪向けの機能なので、公開ビルドでは
-  /// まとめて落とす（`docs/music-assistant-integration.md` §6）。
-  final MaController? assistant;
+  /// hi-res（Qobuz を直に叩いて WiiM で鳴らす側）。music と同じフラグで出す
+  /// ——どちらも音楽サービスに繋ぐ内輪向けの機能で、こちらは非公式の
+  /// app_id に依存するので公開ビルドではまとめて落とす
+  /// （`docs/qobuz-wiim-integration.md` §6）。
+  final QobuzController? assistant;
 
   /// 無操作で music に戻るまで。
   ///
@@ -80,7 +81,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // 前面にいない間は HA / MA との接続を張りっぱなしにしない。
+    // 前面にいない間は HA との接続も WiiM のポーリングも止める。
     final foreground = state == AppLifecycleState.resumed;
     widget.home.setForeground(foreground);
     widget.assistant?.setForeground(foreground);
@@ -121,7 +122,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     Navigator.of(context).pop();
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (context) => MaSetupScreen(
+        builder: (context) => QobuzSetupScreen(
           controller: assistant,
           isRoot: false,
           onOpenMenu: () => Navigator.of(context).pop(),
@@ -167,7 +168,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
               AppMode.music: MusicView(section: music, onOpenMenu: _openMenu),
             if (assistant != null)
               AppMode.assistant:
-                  MaView(controller: assistant, onOpenMenu: _openMenu),
+                  QobuzView(controller: assistant, onOpenMenu: _openMenu),
             AppMode.home: home,
           },
         ),
@@ -213,7 +214,7 @@ class _ShellDrawer extends StatelessWidget {
   final AppMode mode;
   final HomeController home;
   final MusicSection? music;
-  final MaController? assistant;
+  final QobuzController? assistant;
   final ValueChanged<AppMode> onSelect;
   final VoidCallback onOpenSetup;
   final VoidCallback onOpenAssistantSetup;
@@ -272,8 +273,8 @@ class _ShellDrawer extends StatelessWidget {
                 if (assistant != null)
                   _ModeRow(
                     icon: Icons.settings_ethernet,
-                    label: 'MUSIC ASSISTANT の接続設定',
-                    subtitle: assistant.connection?.baseUrl.host ?? '未設定',
+                    label: 'HI-RES の接続設定',
+                    subtitle: assistant.wiimConnection?.host ?? '未設定',
                     selected: false,
                     onTap: onOpenAssistantSetup,
                   ),

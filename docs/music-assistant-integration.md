@@ -1,5 +1,10 @@
 # Music Assistant 連携 / Qobuz を WiiM で鳴らす
 
+> **この経路は 2026-08-28 に廃止した。** hi-res は MA を介さず Qobuz を直に
+> 叩く形へ一本化し、`app/lib` の MA 実装（`ma_*.dart` 一式）は削除済み。
+> 現行の設計は `qobuz-wiim-integration.md`。このメモは MA 側の手順
+> （§7）と Qobuz Connect の事情（§8）を残すために置いてある。
+
 Spotify に続く 2 本目の音源として Music Assistant（以下 MA）を足す。狙いは
 **Qobuz の HiRes を WiiM にロスレスのまま流すこと**、そして Spotify と Qobuz を
 同じ画面のキューで扱えるようにすること。

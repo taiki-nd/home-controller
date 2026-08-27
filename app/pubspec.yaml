@@ -23,7 +23,14 @@ dependencies:
   # ローテーションするので、返ってきた値を必ず上書き保存する（AuthService 参照）。
   flutter_secure_storage: ^9.2.4
   # Web API クライアント。429 の Retry-After 尊重と 401 リフレッシュを interceptor で扱う。
+  # **Qobuz 用と WiiM 用でインスタンスを分ける。** WiiM は自己署名証明書なので
+  # 検証を切った adapter を差すが、それを Qobuz 側に持ち込んではいけない
+  # （docs/qobuz-wiim-integration.md §5）。
   dio: ^5.7.0
+  # Qobuz の署名（track/getFileUrl）とパスワードハッシュの MD5。
+  # ここを間違えると再生だけが通らないので、test/qobuz_signature_test.dart で
+  # 固定値と突き合わせている。
+  crypto: ^3.0.6
   # アートワークから背景色を抽出する（Spotify デザインガイドライン上、
   # アートワーク自体の改変はできないので「色を採るだけ」に留める）。
   palette_generator: ^0.3.3+7

@@ -68,6 +68,12 @@
 			</array>
 		</dict>
 	</array>
+	<!-- LAN の WiiM を httpapi で叩くために要る。**これが無いと接続が
+	     無言で失敗する**（タイムアウトするだけでダイアログも出ない）。
+	     docs/qobuz-wiim-integration.md §6。
+	     SSDP は使わないので multicast エンタイトルメントは要らない。 -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>WiiM プレーヤーを操作するためにローカルネットワークへアクセスします</string>
 	<!-- HTTPS(TLS) しか使っておらず輸出規制の申告対象外。
 	     これが無いと TestFlight にビルドが出るたびに手動回答を求められる。 -->
 	<key>ITSAppUsesNonExemptEncryption</key>

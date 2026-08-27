@@ -3,8 +3,8 @@ import 'package:flutter/services.dart';
 
 import 'services/app_flags.dart';
 import 'state/home_controller.dart';
-import 'state/ma_controller.dart';
 import 'state/music_section.dart';
+import 'state/qobuz_controller.dart';
 import 'theme/tokens.dart';
 import 'ui/app_shell.dart';
 
@@ -15,7 +15,7 @@ Future<void> main() async {
   runApp(const HomeCtlApp());
 }
 
-/// home（Home Assistant）と music（Spotify）と hi-res（Music Assistant）を束ねる。
+/// home（Home Assistant）と music（Spotify）と hi-res（Qobuz → WiiM）を束ねる。
 ///
 /// music と hi-res は [AppFlags.enableMusic] が false のビルドでは
 /// **そもそも作らない。**
@@ -31,8 +31,8 @@ class HomeCtlApp extends StatefulWidget {
 class _HomeCtlAppState extends State<HomeCtlApp> {
   final HomeController _home = HomeController();
   final MusicSection? _music = AppFlags.enableMusic ? MusicSection() : null;
-  final MaController? _assistant =
-      AppFlags.enableMusic ? MaController() : null;
+  final QobuzController? _assistant =
+      AppFlags.enableMusic ? QobuzController() : null;
 
   @override
   void dispose() {
