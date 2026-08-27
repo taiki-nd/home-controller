@@ -71,7 +71,8 @@
 	<!-- LAN の WiiM を httpapi で叩くために要る。**これが無いと接続が
 	     無言で失敗する**（タイムアウトするだけでダイアログも出ない）。
 	     docs/qobuz-wiim-integration.md §6。
-	     SSDP は使わないので multicast エンタイトルメントは要らない。 -->
+	     LAN の探索（WiimDiscovery, §5.1）も /24 をユニキャストで舐めるだけなので、
+	     SSDP / mDNS は使わず multicast エンタイトルメントも要らない。 -->
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>WiiM プレーヤーを操作するためにローカルネットワークへアクセスします</string>
 	<!-- HTTPS(TLS) しか使っておらず輸出規制の申告対象外。

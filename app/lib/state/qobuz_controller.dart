@@ -8,8 +8,10 @@ import '../models/wiim_models.dart';
 import '../services/qobuz_api.dart';
 import '../services/qobuz_bundle.dart';
 import '../services/qobuz_credentials.dart';
+import '../services/qobuz_web_login.dart';
 import '../services/wiim_api.dart';
 import '../services/wiim_credentials.dart';
+import '../services/wiim_discovery.dart';
 
 /// 画面が知りたい状態。
 enum QobuzStatus {
@@ -104,10 +106,12 @@ class QobuzController extends ChangeNotifier {
     WiimCredentials? wiimCredentials,
     QobuzApi? api,
     WiimApi? wiim,
+    WiimDiscovery? discovery,
   }) : _credentials = credentials ?? QobuzCredentials(),
        _wiimCredentials = wiimCredentials ?? WiimCredentials(),
        _api = api ?? QobuzApi(),
-       _wiim = wiim ?? WiimApi();
+       _wiim = wiim ?? WiimApi(),
+       _discovery = discovery ?? WiimDiscovery();
 
   /// 再生中と停止中でポーリング間隔を変える（§7 M2）。
   /// 壁掛けでシークバーが動いて見えるのは再生中だけでよい。
@@ -131,6 +135,7 @@ class QobuzController extends ChangeNotifier {
   final WiimCredentials _wiimCredentials;
   final QobuzApi _api;
   final WiimApi _wiim;
+  final WiimDiscovery _discovery;
 
   QobuzAppConfig? _app;
   QobuzAccount? _account;
@@ -149,6 +154,11 @@ class QobuzController extends ChangeNotifier {
 
   WiimStatus? _wiimStatus;
   WiimDevice? _device;
+
+  List<WiimCandidate> _candidates = const [];
+  bool _scanning = false;
+  int _scanDone = 0;
+  int _scanTotal = 0;
 
   final List<QobuzQueueItem> _queue = [];
   int _index = -1;
@@ -197,6 +207,14 @@ class QobuzController extends ChangeNotifier {
   WiimDevice? get device => _device;
 
   String get deviceName => _device?.name ?? _wiimConnection?.host ?? 'WiiM';
+
+  /// LAN の探索で見つかった WiiM（`WiimDiscovery`）。
+  List<WiimCandidate> get candidates => _candidates;
+  bool get scanning => _scanning;
+
+  /// 「254 台中 120 台まで見た」。0〜1。**総数 0 のときは 0。**
+  double get scanProgress =>
+      _scanTotal == 0 ? 0 : (_scanDone / _scanTotal).clamp(0.0, 1.0);
 
   QobuzTab get tab => _tab;
   String get query => _query;
@@ -325,6 +343,62 @@ class QobuzController extends ChangeNotifier {
     await _connect();
   }
 
+  /// 同じ LAN の WiiM を探す（§5.1）。
+  ///
+  /// **見つかっても勝手には繋がない。** 1 台だけでも「これで合っているか」は
+  /// 人にしか分からない（隣家の WiiM が見えることもある）ので、
+  /// 選ぶのは [selectWiim]。
+  Future<void> discoverWiim() async {
+    if (_scanning) return;
+    _scanning = true;
+    _candidates = const [];
+    _scanDone = 0;
+    _scanTotal = 0;
+    _error = null;
+    notifyListeners();
+    try {
+      await _discovery.scan(
+        onFound: (candidate) {
+          if (_disposed) return;
+          // 見つかるそばから出す。**全部終わるまで待たせない。**
+          _candidates = [..._candidates, candidate];
+          notifyListeners();
+        },
+        onProgress: (done, total) {
+          if (_disposed) return;
+          _scanDone = done;
+          _scanTotal = total;
+          // 進捗だけの通知。1 台ごとに画面を作り直すのは重いので、
+          // 10 台ごとに間引く。
+          if (done % 10 == 0 || done == total) notifyListeners();
+        },
+      );
+      if (_disposed) return;
+      if (_candidates.isEmpty) {
+        _error = _scanTotal == 0
+            ? 'この端末の LAN が分かりませんでした。IP を手で入れてください'
+            : 'WiiM が見つかりませんでした。'
+                  '同じ Wi-Fi にいるか、ローカルネットワークの許可を確認してください';
+      }
+    } catch (e) {
+      debugPrint('WiimDiscovery failed: $e');
+      if (!_disposed) _error = 'LAN の探索に失敗しました。IP を手で入れてください';
+    } finally {
+      _scanning = false;
+      notifyListeners();
+    }
+  }
+
+  void cancelDiscovery() {
+    if (!_scanning) return;
+    _discovery.cancel();
+    _scanning = false;
+    notifyListeners();
+  }
+
+  /// 一覧から 1 台選ぶ。
+  Future<void> selectWiim(WiimCandidate candidate) => saveWiim(candidate.host);
+
   /// app_id / app_secret を手で入れる。**bundle.js から取れないときの逃げ道。**
   Future<void> saveAppConfig(String appId, String appSecret) async {
     final config = QobuzAppConfig(
@@ -348,39 +422,106 @@ class QobuzController extends ChangeNotifier {
     notifyListeners();
     try {
       final keys = await QobuzBundle.discover();
-      final sample = await _sampleTrackId(keys.appId);
-      String? winner;
-      for (final secret in keys.secrets) {
-        _api.config = QobuzAppConfig(appId: keys.appId, appSecret: secret);
-        try {
-          await _api.fileUrl(sample, format: QobuzFormat.cd);
-          winner = secret;
-          break;
-        } on QobuzException {
-          // この候補は外れ。次へ。
-          continue;
-        }
-      }
-      if (winner == null) {
-        throw QobuzAppException('app_secret の候補がどれも通りませんでした');
-      }
+      final winner = await _pickSecret(keys.appId, keys.secrets);
       await saveAppConfig(keys.appId, winner);
       _toast = 'app_id / app_secret を取り直しました';
       if (_account != null && _wiimConnection != null) await _connect();
     } on QobuzException catch (e) {
       _api.config = _app;
-      _fail(e.message);
+      _fail('${e.message}（アプリ内ブラウザからの取り込みも試せます）');
+    } catch (e) {
+      // **黙って終わらせない。** ここに来るのは想定外の型（JSON の壊れなど）で、
+      // 何も出ないと「押しても無反応」にしか見えない。
+      debugPrint('QobuzController.refreshKeys failed: $e');
+      _api.config = _app;
+      _fail('鍵を取り直せませんでした。アプリ内ブラウザからの取り込みを試してください');
     } finally {
       _busy = false;
       notifyListeners();
     }
   }
 
+  /// アプリ内ブラウザで拾った鍵とトークンを取り込む（§3.2）。
+  ///
+  /// **ログイン画面の入力より優先する。** Web プレイヤー自身が使っている
+  /// app_id とトークンなので、少なくともその瞬間は必ず通る組み合わせ。
+  /// user_id だけは付いてこないので `user/get` で引き直す。
+  Future<void> applyWebLogin(QobuzWebLoginResult result) async {
+    if (result.appId.isEmpty || result.token.isEmpty) {
+      _fail('ブラウザから鍵とトークンを取れませんでした');
+      return;
+    }
+    _busy = true;
+    _error = null;
+    notifyListeners();
+    try {
+      _api.token = result.token;
+      // 候補が空でも止めない。**トークンだけでも検索とブラウズは動く**ので、
+      // 手で入れてある app_secret を残したまま先へ進める。
+      final secret = await _pickSecret(
+        result.appId,
+        result.secrets,
+        fallback: _app?.appSecret,
+      );
+      await saveAppConfig(result.appId, secret);
+      final user = await _api.currentUser();
+      final account = QobuzAccount(
+        token: result.token,
+        userId: user.id,
+        displayName: user.displayName,
+        subscription: user.subscription,
+      );
+      await _credentials.saveAccount(account);
+      _account = account;
+      _toast = 'Qobuz の鍵とログインを取り込みました';
+      await _connect();
+    } on QobuzException catch (e) {
+      _api.config = _app;
+      _api.token = _account?.token;
+      _fail(e.message);
+    } catch (e) {
+      debugPrint('QobuzController.applyWebLogin failed: $e');
+      _api.config = _app;
+      _api.token = _account?.token;
+      _fail('ブラウザから取り込んだ値を反映できませんでした');
+    } finally {
+      _busy = false;
+      notifyListeners();
+    }
+  }
+
+  /// app_secret の候補を総当りして、通ったものを返す。
+  ///
+  /// **どれが当たりかは叩くまで分からない**（`QobuzBundle` 参照）。
+  /// 判定は署名が要る `track/getFileUrl` でしかできないので、検索で拾った
+  /// 1 曲を使う。
+  Future<String> _pickSecret(
+    String appId,
+    List<String> secrets, {
+    String? fallback,
+  }) async {
+    if (secrets.isEmpty) {
+      if (fallback != null && fallback.isNotEmpty) return fallback;
+      throw QobuzAppException('app_secret を取れませんでした');
+    }
+    final sample = await _sampleTrackId(appId);
+    for (final secret in secrets) {
+      _api.config = QobuzAppConfig(appId: appId, appSecret: secret);
+      try {
+        await _api.fileUrl(sample, format: QobuzFormat.cd);
+        return secret;
+      } on QobuzException {
+        // この候補は外れ。次へ。
+        continue;
+      }
+    }
+    throw QobuzAppException('app_secret の候補がどれも通りませんでした');
+  }
+
   /// 総当りに使う 1 曲。**署名の要らない検索で拾う**ので、
   /// app_secret が外れていても取れる。
   Future<int> _sampleTrackId(String appId) async {
     _api.config = QobuzAppConfig(appId: appId, appSecret: '');
-    _api.token = _account?.token;
     final results = await _api.search('the', limit: 1);
     final track = results.tracks.isEmpty ? null : results.tracks.first;
     if (track == null) {
@@ -978,6 +1119,7 @@ class QobuzController extends ChangeNotifier {
     _searchTimer?.cancel();
     _api.close();
     _wiim.close();
+    _discovery.close();
     progressTick.dispose();
     super.dispose();
   }

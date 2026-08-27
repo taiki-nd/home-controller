@@ -103,6 +103,30 @@ class QobuzApi {
   /// トークンがまだ通るかの確認。起動時に一度だけ叩く。
   Future<void> verifyToken() => _request('user/get', params: const {});
 
+  /// いま載せているトークンの持ち主。
+  ///
+  /// **アプリ内ブラウザから来たトークンには user_id が付いてこない**
+  /// （`QobuzWebLogin`）。自分のプレイリストの判定に user_id が要るので、
+  /// ここで引き直す。応答は user を包む形と剥き出しの形の両方があるので、
+  /// どちらでも読めるようにしておく。
+  Future<QobuzUser> currentUser() async {
+    final json = await _request('user/get', params: const {});
+    final wrapped = json['user'];
+    final user = wrapped is Map
+        ? Map<String, dynamic>.from(wrapped)
+        : json;
+    final id = (user['id'] as num?)?.toInt();
+    if (id == null) throw QobuzAuthException('Qobuz のアカウントを読めませんでした');
+    final credential = user['credential'];
+    return QobuzUser(
+      id: id,
+      token: token ?? '',
+      displayName: user['display_name'] as String?,
+      email: user['email'] as String?,
+      subscription: credential is Map ? credential['label'] as String? : null,
+    );
+  }
+
   // ── ブラウズ ────────────────────────────────────────────────────────
 
   Future<List<QobuzPlaylist>> userPlaylists({int? ownerUserId}) async {

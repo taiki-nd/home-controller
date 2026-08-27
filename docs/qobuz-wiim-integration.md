@@ -28,6 +28,9 @@ hi-res モードの設計メモ。**Music Assistant を介さず、iPad から Q
 | 10 | 署名付き URL の載せ方をどちらかに確定する（§5.2） | 実機 | |
 | 11 | プレイリスト編集の UI（API は実装済み、§3.5） | `app/lib/ui/hires/` | |
 | 12 | ギャップレス（方式 B）が要るかの判断（§5.3） | 実機 | |
+| 13 | ~~LAN から WiiM を探す（§5.1）~~ | `app/lib/services/wiim_discovery.dart` | ✅ |
+| 14 | ~~アプリ内ブラウザでの鍵 + ログイン取り込み（§3.2）~~ | `app/lib/services/qobuz_web_login.dart` | ✅ |
+| 15 | **実機でブラウザ経路を確かめる**（localStorage のキー名は決め打ちしていないが、Qobuz 側の作りが変われば拾えなくなる） | iPad | |
 
 ---
 
@@ -77,8 +80,11 @@ app/lib/
   services/qobuz_api.dart       REST クライアント
   services/qobuz_bundle.dart    bundle.js からの鍵取り直し
   services/qobuz_credentials.dart / wiim_credentials.dart  Keychain
+  services/qobuz_web_login.dart アプリ内ブラウザから鍵とトークンを取る（§3.2）
   services/wiim_api.dart        httpapi.asp クライアント
+  services/wiim_discovery.dart  LAN から WiiM を探す（§5.1）
   services/insecure_adapter*.dart  自己署名証明書を通す口（web 用の空実装つき）
+  services/local_addresses*.dart   自分の IPv4（web 用の空実装つき）
   state/qobuz_controller.dart   キュー・ポーリング・検索・ライブラリ
   ui/hires/                     画面
 ```
@@ -113,8 +119,32 @@ Web プレイヤーが使う `app_id` を流用する。規約の想定外なの
 4. `name:"…/<Tz>",info:"<info>",extras:"<extras>"` で残り 2/3
 5. `seed + info + extras` を連結 → **末尾 44 文字を落とす** → base64 デコード
 
-**候補は複数出る。どれが当たりかは叩くまで分からない。** `refreshKeys()` は
-検索で拾った 1 曲に対して `track/getFileUrl` を総当りし、通ったものだけ残す。
+**候補は複数出る。どれが当たりかは叩くまで分からない。**
+`QobuzController._pickSecret` が検索で拾った 1 曲に対して `track/getFileUrl` を
+総当りし、通ったものだけ残す。
+
+#### アプリ内ブラウザから取る（`QobuzWebLogin` / `QobuzWebLoginScreen`）
+
+**素の HTTP で play.qobuz.com を舐める経路は空振りすることがある。**
+上の 1.〜5. は Qobuz 側がボット避けを挟むと最初の 1 歩で止まり、しかも
+「押しても何も起きない」ようにしか見えない。そこで**本物のブラウザ**で
+本人にログインしてもらい、Web プレイヤーが自分で使っている値を横から受け取る
+経路を足した。**この画面が鍵（§3.2）とログイン（§3.1）を一度に片付ける。**
+
+- 拾うのは 2 つだけ。**パスワードは見ない**（見る必要がない）
+  1. `X-App-Id` / `X-User-Auth-Token` — `fetch` と `XMLHttpRequest` の
+     ヘッダにフックを掛け、併せて localStorage / sessionStorage も舐める。
+     **キー名は決め打ちしない**（Qobuz 側の都合で変わる）
+  2. bundle.js の秘密の素 — **ページ側で読む**。数 MB を JS↔Dart の橋に
+     流さないよう、`QobuzBundle.patterns`（Dart と同じ正規表現）に当たった
+     箇所だけを送り返し、組み立ては Dart の `QobuzBundle.extract` に一本化する
+- フックは遷移で消えるので、`onPageStarted` / `onPageFinished` と 2 秒周期の
+  3 か所から**何度でも差し込む**（二重には掛からない）
+- トークンには `user_id` が付いてこない。自分のプレイリストの判定に要るので
+  `QobuzApi.currentUser()`（`user/get`）で引き直す
+
+**`webview_flutter` は web ビルドに実装が無い。** `make app-web` / `app-mock`
+では画面が `kIsWeb` を見て「iOS / Android でだけ使えます」に倒れる。
 
 失効の切り分け（`QobuzApi._errorFor`）:
 
@@ -199,11 +229,30 @@ sig = md5("trackgetFileUrl" + "format_id" + <format_id>
 - **自己署名証明書なので検証を切る**（`insecure_adapter_io.dart`）。
   **Qobuz 用の Dio とは必ず分ける**——検証を切ってよいのは LAN の WiiM だけ
 
-### 5.1 デバイス発見
+### 5.1 デバイス発見（`WiimDiscovery`）
 
-**SSDP は使わない。** iOS でマルチキャストを使うには
+**SSDP も mDNS も使わない。** iOS でマルチキャストを使うには
 `com.apple.developer.networking.multicast` が要り、Apple の申請と承認が必要。
-設定画面で **IP 手入力**（WiiM 側は DHCP 予約で固定）。
+
+代わりに **/24 をユニキャストで端から叩く。** 権限は
+`NSLocalNetworkUsageDescription` だけで済み、許可を取りこぼしていても
+「無言のタイムアウト」ではなく**「0 台」という見える形**で出る。
+
+- 自分の IPv4（`NetworkInterface`）から /24 を割り出す。
+  プライベート（10 / 172.16-31 / 192.168）だけ、**最大 2 セグメント**
+- `.1`〜`.254` に `getStatusEx` を投げる。同時 24 本、1 台あたり 1.2 秒で打ち切り
+- `DeviceName` があり `uuid` / `project` / `firmware` のどれかを持つものだけ
+  LinkPlay と見なす
+- **見つかっても勝手には繋がない。** 集合住宅では隣家の WiiM が見えるので、
+  一覧から人が選ぶ（`QobuzController.selectWiim`）
+- 見つかるそばから一覧に出し、進捗（`scanProgress`）も出す。
+  **無音で 10 秒待たされると壊れて見える**
+
+**IP 手入力は残してある。** VLAN を切っている・/24 でない・探索が空振り、
+のいずれでもここから入れられる（WiiM 側は DHCP 予約で固定しておくと確実）。
+
+`NetworkInterface` は `dart:io` にしか無いので、web ビルドを壊さないよう
+`local_addresses.dart` で条件付き import にしている（`insecure_adapter` と同型）。
 
 ### 5.2 署名付き URL の載せ方（**未確定**）
 
@@ -260,6 +309,10 @@ UPnP の PlayQueue を使えば WiiM 側にキューを持たせられるが、
 - **App Store 配布・OSS 公開はしない。** 非公式の app_id / app_secret に
   依存しているため。`ENABLE_MUSIC=false` の公開ビルドでは
   music（Spotify）ごとコンパイル時に落ちる（`release-strategy.md` §3）
+- アプリ内ブラウザ（§3.2）は**パスワードを見ない**。拾うのはログイン後の
+  Web プレイヤーが自分で使っている `X-App-Id` / `X-User-Auth-Token` と
+  bundle.js の秘密の素だけで、いずれも Keychain に置く。
+  `QobuzWebLoginResult.toString()` はトークンを伏せる
 - iOS: `NSLocalNetworkUsageDescription` が必須。
   **これが無いと WiiM への接続が無言で失敗する**（ダイアログすら出ない）。
   再生は WiiM 側で行われるので、オーディオのバックグラウンドモードは不要
@@ -295,12 +348,27 @@ music と混ぜない）。
 - ヘッダのピルはタップで音量。**スライダーは離した時にだけ送る**
   （ドラッグ中に毎フレーム httpapi を叩くと WiiM が詰まる）
 
+設定画面（`qobuz_setup_screen.dart`）の注意:
+
+- **画面自身が `QobuzController` を購読する**（`ListenableBuilder`）。
+  Drawer から `Navigator.push` で開くと `QobuzView` の外側に居るため、
+  これが無いと `notifyListeners` がどこにも届かない。
+  **「Web から取り直す」を押しても進行中もエラーも何も出ない**という
+  壊れ方をしていたのがこれ
+- 入口の順は「アプリ内ブラウザ（§3.2）→ 手入力」。**手入力は必ず残す**——
+  非公式の経路なので、いつ空振りしてもおかしくない
+
 ---
 
 ## 9. テスト
 
 - `qobuz_signature_test.dart` — **署名は固定値と突き合わせる**
 - `qobuz_bundle_test.dart` — 抽出は純粋関数として切ってあるので入力を固定できる
+- `qobuz_web_login_test.dart` — 橋を渡ってきた値の読み方と、
+  **削り込んでも（`reduce`）鍵が組み立つこと**。JS 自体は実機でしか動かない
+- `wiim_discovery_test.dart` — 舐めるホストの並べ方（純粋関数）と、
+  叩く口を差し替えた走査。**ネットワークは触らない**
+- `qobuz_setup_test.dart` — 探索 → 選択、ブラウザからの取り込み（§3.2）
 - `wiim_status_test.dart` — 文字列の数値・16 進・時計での補間
 - `qobuz_controller_test.dart` — キュー（次に再生 / 追加 / 並べ替え / 削除 /
   曲送り / リピート / 鳴らせない曲の扱い）

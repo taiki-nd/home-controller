@@ -55,6 +55,35 @@ class QobuzBundle {
   static RegExp _infoPattern(String timezone) =>
       RegExp('name:"\\w+/$timezone",info:"([\\w=]+)",extras:"([\\w=]+)"');
 
+  /// タイムゾーンを問わない版。**[reduce] のためだけにある。**
+  static final _infoAnyPattern = RegExp(
+    r'name:"\w+/\w+",info:"([\w=]+)",extras:"([\w=]+)"',
+  );
+
+  /// [extract] が見る 3 つの形。**JavaScript の `RegExp` にそのまま渡せる**
+  /// 書き方に揃えてある（`QobuzWebLogin` がアプリ内ブラウザ側で使う）。
+  static List<String> get patterns => [
+    _appIdPattern.pattern,
+    _seedPattern.pattern,
+    _infoAnyPattern.pattern,
+  ];
+
+  /// bundle.js から「[extract] が要る部分」だけを抜いて繋ぎ直す。
+  ///
+  /// **数 MB を持ち歩かないための削り込み。** アプリ内ブラウザから鍵を取る経路
+  /// （`QobuzWebLogin`）では bundle.js をページ側で読むので、JS↔Dart の橋を
+  /// 数 MB の文字列が通ることになる。同じ正規表現で当たった箇所だけを送れば
+  /// 数百バイトで済み、組み立ての理屈は Dart 側の [extract] 一本に残せる。
+  static String reduce(String bundle) {
+    final out = <String>[];
+    for (final pattern in patterns) {
+      for (final match in RegExp(pattern).allMatches(bundle)) {
+        out.add(match.group(0)!);
+      }
+    }
+    return out.join('\n');
+  }
+
   /// 取りに行く。ネットワークが要る唯一の部分。
   static Future<QobuzBundleKeys> discover({Dio? dio}) async {
     final client =
