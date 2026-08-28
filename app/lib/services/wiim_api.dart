@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import '../models/wiim_models.dart';
 import 'insecure_adapter.dart';
 import 'wiim_credentials.dart';
+import 'wiim_upnp.dart';
 
 /// WiiM とのやり取りが失敗した。文言はそのまま画面に出す前提で作る。
 class WiimException implements Exception {
@@ -39,8 +40,10 @@ enum WiimUrlEncoding {
 /// **Qobuz 用の [Dio] とは必ず分ける。** こちらは自己署名証明書を通すために
 /// 検証を切っており、その設定を Qobuz 側に波及させてはいけない。
 class WiimApi {
-  WiimApi({this.connection, Dio? dio})
-    : _dio =
+  WiimApi({WiimConnection? connection, Dio? dio, WiimUpnp? upnp})
+    : _connection = connection,
+      _upnp = upnp ?? WiimUpnp(connection: connection),
+      _dio =
           dio ??
           Dio(
             BaseOptions(
@@ -55,16 +58,32 @@ class WiimApi {
   }
 
   final Dio _dio;
+  final WiimUpnp _upnp;
 
   /// 直近に通った載せ方を覚えておく口。
   ///
   /// 1 曲目で当たりが分かれば、以降は最初から通る形で送れる。
+  /// **UPnP が通っている間はこれを使わない**（§5.2 の問題ごと消える）。
   WiimUrlEncoding urlEncoding = WiimUrlEncoding.raw;
 
-  /// 接続先。設定画面で入れ替わる。
-  WiimConnection? connection;
+  /// UPnP 経路をまだ信じているか。
+  ///
+  /// 一度でも断られたら HTTP API に倒したまま同じ個体で試し直さない
+  /// （曲送りのたびに 5 秒待つのを避ける）。接続先を入れ替えたら戻す。
+  bool _upnpAvailable = true;
 
-  bool get isConfigured => connection != null;
+  WiimConnection? _connection;
+
+  /// 接続先。設定画面で入れ替わる。
+  WiimConnection? get connection => _connection;
+
+  set connection(WiimConnection? value) {
+    _connection = value;
+    _upnp.connection = value;
+    _upnpAvailable = true;
+  }
+
+  bool get isConfigured => _connection != null;
 
   // ── 状態 ────────────────────────────────────────────────────────────
 
@@ -83,8 +102,28 @@ class WiimApi {
   /// URL を投げて鳴らす。
   ///
   /// **URL は再生直前に取ったものを渡すこと**（Qobuz の署名は 24 時間で切れる）。
-  Future<void> play(String url, {WiimUrlEncoding? encoding}) =>
-      _send('setPlayerCmd:play:${(encoding ?? urlEncoding).apply(url)}');
+  ///
+  /// [meta] があれば UPnP の `SetAVTransportURI` を先に試す。**HTTP API の
+  /// `play:url` には曲名もジャケットも載せる口が無く**、その経路で送ると
+  /// WiiM 本体のディスプレイに署名付き URL がそのまま出る（§5.5）。
+  /// UPnP が断られたら黙って HTTP API に落とす——鳴ることの方が大事。
+  Future<WiimPlayRoute> play(
+    String url, {
+    WiimTrackMetadata? meta,
+    WiimUrlEncoding? encoding,
+  }) async {
+    if (meta != null && _upnpAvailable) {
+      try {
+        await _upnp.play(url, meta);
+        return WiimPlayRoute.upnp;
+      } on WiimUpnpException catch (e) {
+        debugPrint('WiimApi: UPnP を諦めて HTTP API に落とします（$e）');
+        _upnpAvailable = false;
+      }
+    }
+    await _send('setPlayerCmd:play:${(encoding ?? urlEncoding).apply(url)}');
+    return WiimPlayRoute.httpApi;
+  }
 
   Future<void> pause() => _send('setPlayerCmd:pause');
   Future<void> resume() => _send('setPlayerCmd:resume');
@@ -114,7 +153,7 @@ class WiimApi {
   }
 
   Future<String> _send(String command) async {
-    final connection = this.connection;
+    final connection = _connection;
     if (connection == null) throw WiimException('WiiM の IP が設定されていません');
     try {
       // **`Uri.parse` した URL をそのまま渡す。** queryParameters 経由だと
@@ -140,5 +179,8 @@ class WiimApi {
     }
   }
 
-  void close() => _dio.close(force: true);
+  void close() {
+    _dio.close(force: true);
+    _upnp.close();
+  }
 }
