@@ -1088,6 +1088,34 @@ class _MockQobuzApi extends QobuzApi {
     ),
   ];
 
+  /// **中身も返す。** 一覧の `tracks` は空なので、ライブラリから 1 件選んで
+  /// 流す／中身を開く経路はここを通る。返さないとモックでその流れを目視
+  /// できない（本物の HTTP に出て行って転ぶ）。
+  @override
+  Future<QobuzPlaylist> playlist(int playlistId, {int? ownerUserId}) async {
+    final count = playlistId == 1 ? 24 : 61;
+    return QobuzPlaylist(
+      id: playlistId,
+      name: playlistId == 1 ? '夜の作業' : 'ハイレゾ棚',
+      owner: 'わたし',
+      tracksCount: count,
+      imageUrl: 'mock/pl-$playlistId.png',
+      isOwner: true,
+      tracks: List.generate(count, (i) => _mockTrack(i + 1)),
+    );
+  }
+
+  @override
+  Future<QobuzAlbum> album(String albumId) async => QobuzAlbum(
+    id: albumId,
+    title: 'Some Kind of Peace',
+    artist: 'Ólafur Arnalds',
+    imageUrl: 'mock/art-2.png',
+    tracksCount: 11,
+    hires: true,
+    tracks: List.generate(11, (i) => _mockTrack(i + 2)),
+  );
+
   @override
   Future<QobuzFavorites> favorites({int limit = 100}) async => QobuzFavorites(
     tracks: List.generate(5, (i) => _mockTrack(i + 2)),
