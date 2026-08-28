@@ -12,6 +12,10 @@
 // home 側は ☰ から。照明・エアコン・シーンは押すと 320ms 後に state_changed が
 // 返るので、**楽観更新が効いている（押した瞬間に光る）のを目で確認できる。**
 //
+// QOBUZ 側も ☰ から。Qobuz にも WiiM にもつながず、偽の WiiM が「投げられた
+// URL を鳴らしているつもり」で状態を返す。**music と同じ部品を使っている
+// （PlaybackSurface）ので、並べて見れば揃っているかがそのまま分かる。**
+//
 // アートワークは web/mock/*.png。同一オリジンなので CORS に引っかからず、
 // palette_generator の背景色抽出（PlayerController._updatePalette）も通る。
 
@@ -20,16 +24,23 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
+import 'models/qobuz_models.dart';
 import 'models/release_models.dart';
 import 'models/spotify_models.dart';
+import 'models/wiim_models.dart';
 import 'services/auth_service.dart';
 import 'services/ha_credentials.dart';
 import 'services/ha_socket.dart';
 import 'services/home_assistant_api.dart';
 import 'services/musicbrainz_api.dart';
+import 'services/qobuz_api.dart';
+import 'services/qobuz_credentials.dart';
 import 'services/spotify_api.dart';
+import 'services/wiim_api.dart';
+import 'services/wiim_credentials.dart';
 import 'state/home_controller.dart';
 import 'state/music_section.dart';
+import 'state/qobuz_controller.dart';
 import 'theme/tokens.dart';
 import 'ui/app_shell.dart';
 
@@ -80,6 +91,15 @@ class _MockAppState extends State<MockApp> {
         HaSession.connect(connection, opener: (_) async => _MockHaSocket()),
   );
 
+  /// hi-res（Qobuz + WiiM）側。**設定済みの状態から始める**ので、
+  /// 開いた瞬間に再生画面が出る（設定画面を見たいときは Drawer から）。
+  late final QobuzController _qobuz = QobuzController(
+    credentials: _MockQobuzCredentials(),
+    wiimCredentials: _MockWiimCredentials(),
+    api: _MockQobuzApi(),
+    wiim: _MockWiimApi(),
+  );
+
   /// 起動時は ?device=iphone / ?device=ipad を見る。無ければウィンドウ追従。
   _Stage _stage = _Stage.values.firstWhere(
     (s) => s.name == Uri.base.queryParameters['device'],
@@ -89,6 +109,7 @@ class _MockAppState extends State<MockApp> {
   @override
   void dispose() {
     _music.dispose();
+    _qobuz.dispose();
     _home.dispose();
     super.dispose();
   }
@@ -113,8 +134,9 @@ class _MockAppState extends State<MockApp> {
     );
   }
 
-  /// 本番と同じ [AppShell]。☰ から home / music を行き来できる。
-  Widget _screen() => AppShell(home: _home, music: _music);
+  /// 本番と同じ [AppShell]。☰ から HOME / SPOTIFY / QOBUZ を行き来できる。
+  Widget _screen() =>
+      AppShell(home: _home, music: _music, assistant: _qobuz);
 
   /// 枠に入れる。MediaQuery も端末のサイズ/セーフエリアで上書きするので、
   /// ブレークポイント（kTabletBreakpoint）も SafeArea も実機と同じ判定になる。
@@ -901,4 +923,284 @@ class _MockHaSocket implements HaSocket {
   void _emit(Map<String, Object?> message) {
     if (!_out.isClosed) _out.add(jsonEncode(message));
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// QOBUZ + WiiM の偽物
+//
+// **Qobuz にも WiiM にもつながない。** `QobuzController` の差し替え口
+// （credentials / api / wiim）に偽物を挿すだけで、キューも曲送りも
+// ポーリングも本番と同じコードが動く。
+//
+// 偽 WiiM は「投げられた URL を鳴らしているつもり」で状態を返す。再生位置は
+// 時計で進むので、シークバーもトランスポートも触った結果がそのまま画面に出る。
+// ─────────────────────────────────────────────────────────────────────────
+
+const _mockWiim = WiimConnection(host: '192.168.1.42');
+
+/// Keychain には触らない。設定済みの値を返すだけ。
+class _MockQobuzCredentials extends QobuzCredentials {
+  QobuzAppConfig? _app = const QobuzAppConfig(
+    appId: '798273057',
+    appSecret: 'mockmockmockmockmockmockmockmock',
+  );
+  QobuzAccount? _account = const QobuzAccount(
+    token: 'mock-token',
+    userId: 42,
+    displayName: 'わたし',
+    subscription: 'Studio',
+  );
+
+  @override
+  Future<QobuzAppConfig?> loadApp() async => _app;
+
+  @override
+  Future<void> saveApp(QobuzAppConfig config) async => _app = config;
+
+  @override
+  Future<QobuzAccount?> loadAccount() async => _account;
+
+  @override
+  Future<void> saveAccount(QobuzAccount value) async => _account = value;
+
+  @override
+  Future<void> clearAccount() async => _account = null;
+
+  @override
+  Future<void> clearAll() async {
+    _app = null;
+    _account = null;
+  }
+}
+
+class _MockWiimCredentials extends WiimCredentials {
+  WiimConnection? _saved = _mockWiim;
+
+  @override
+  Future<WiimConnection?> load() async => _saved;
+
+  @override
+  Future<void> save(WiimConnection connection) async => _saved = connection;
+
+  @override
+  Future<void> clear() async => _saved = null;
+}
+
+/// 偽のカタログ。アートワークは web/mock/*.png（同一オリジンなので
+/// `ArtworkPaletteResolver` の色抽出も通る＝背景がちゃんと染まる）。
+QobuzTrack _mockTrack(int id) {
+  const titles = [
+    ('Midnight Corridor', 'Nils Frahm', 'Spaces Revisited'),
+    ('Glass Harbour', 'Ólafur Arnalds', 'Some Kind of Peace'),
+    ('Slow Tide', 'Bonobo', 'Fragments'),
+    ('Paper Lanterns', 'Hania Rani', 'Home'),
+    ('Northbound', 'Kiasmos', 'Blurred'),
+    ('Winter Light', 'Max Richter', 'The Blue Notebooks'),
+    ('Amber Room', 'Floating Points', 'Promises'),
+    ('Quiet Signal', 'Jon Hopkins', 'Music for Psychedelic Therapy'),
+  ];
+  final t = titles[(id - 1) % titles.length];
+  // 半分はハイレゾ扱い。**音質バッジの出し分けを目で見るため。**
+  final hires = id.isOdd;
+  return QobuzTrack(
+    id: id,
+    title: t.$1,
+    artist: t.$2,
+    albumTitle: t.$3,
+    imageUrl: 'mock/art-${(id - 1) % 8 + 1}.png',
+    duration: Duration(seconds: 180 + (id % 5) * 37),
+    hiresStreamable: hires,
+    maxBitDepth: hires ? 24 : 16,
+    maxSamplingRate: hires ? 96 : 44.1,
+  );
+}
+
+class _MockQobuzApi extends QobuzApi {
+  _MockQobuzApi()
+    : super(
+        config: const QobuzAppConfig(
+          appId: '798273057',
+          appSecret: 'mockmockmockmockmockmockmockmock',
+        ),
+      );
+
+  @override
+  Future<void> verifyToken() async {}
+
+  @override
+  Future<QobuzUser> currentUser() async => const QobuzUser(
+    id: 42,
+    token: 'mock-token',
+    displayName: 'わたし',
+    subscription: 'Studio',
+  );
+
+  @override
+  Future<QobuzSearchResults> search(String query, {int limit = 30}) async {
+    // 打った文字を先頭の曲名に混ぜて、検索が効いているのを見えるようにする。
+    await Future<void>.delayed(const Duration(milliseconds: 220));
+    final tracks = List.generate(6, (i) => _mockTrack(i + 1));
+    return QobuzSearchResults(
+      tracks: [
+        QobuzTrack(
+          id: 99,
+          title: '$query（検索結果）',
+          artist: 'Mock Artist',
+          albumTitle: 'Mock Album',
+          imageUrl: 'mock/art-3.png',
+          duration: const Duration(seconds: 214),
+          hiresStreamable: true,
+          maxBitDepth: 24,
+          maxSamplingRate: 192,
+        ),
+        ...tracks,
+      ],
+      albums: [
+        QobuzAlbum(
+          id: 'alb-1',
+          title: '$query in Blue',
+          artist: 'Mock Artist',
+          imageUrl: 'mock/art-5.png',
+          tracksCount: 9,
+          hires: true,
+        ),
+      ],
+    );
+  }
+
+  @override
+  Future<List<QobuzPlaylist>> userPlaylists({int? ownerUserId}) async => [
+    QobuzPlaylist(
+      id: 1,
+      name: '夜の作業',
+      owner: 'わたし',
+      tracksCount: 24,
+      imageUrl: 'mock/pl-1.png',
+      isOwner: true,
+    ),
+    QobuzPlaylist(
+      id: 2,
+      name: 'ハイレゾ棚',
+      owner: 'わたし',
+      tracksCount: 61,
+      imageUrl: 'mock/pl-2.png',
+      isOwner: true,
+    ),
+  ];
+
+  @override
+  Future<QobuzFavorites> favorites({int limit = 100}) async => QobuzFavorites(
+    tracks: List.generate(5, (i) => _mockTrack(i + 2)),
+    albums: [
+      QobuzAlbum(
+        id: 'alb-2',
+        title: 'Some Kind of Peace',
+        artist: 'Ólafur Arnalds',
+        imageUrl: 'mock/art-2.png',
+        tracksCount: 11,
+        hires: true,
+      ),
+    ],
+  );
+
+  @override
+  Future<QobuzFileUrl> fileUrl(
+    int trackId, {
+    QobuzFormat format = QobuzFormat.hires192,
+    DateTime? now,
+  }) async {
+    final track = _mockTrack(trackId);
+    return QobuzFileUrl(
+      trackId: trackId,
+      url: 'https://mock.invalid/file/$trackId.flac',
+      formatId: format.id,
+      bitDepth: track.maxBitDepth,
+      samplingRate: track.maxSamplingRate,
+    );
+  }
+
+  @override
+  void close() {}
+}
+
+/// 投げられた URL を「鳴らしているつもり」で返す偽 WiiM。
+///
+/// **再生位置は時計で進める。** `QobuzController` は 1 秒ごとに status を
+/// 引きに来るので、ここが動けばシークバーも残り時間も本物と同じように動く。
+class _MockWiimApi extends WiimApi {
+  _MockWiimApi() : super(connection: _mockWiim);
+
+  WiimState _state = WiimState.stop;
+  Duration _base = Duration.zero;
+  DateTime? _since;
+  Duration _duration = Duration.zero;
+  int _volume = 32;
+  bool _muted = false;
+
+  Duration get _position {
+    final since = _since;
+    if (_state != WiimState.play || since == null) return _base;
+    final moved = _base + DateTime.now().difference(since);
+    return moved > _duration ? _duration : moved;
+  }
+
+  @override
+  Future<WiimDevice> device() async => const WiimDevice(name: 'リビング');
+
+  @override
+  Future<WiimStatus> status({DateTime? now}) async => WiimStatus(
+    state: _state,
+    position: _position,
+    duration: _duration,
+    volume: _volume,
+    muted: _muted,
+    receivedAt: DateTime.now(),
+  );
+
+  @override
+  Future<void> play(String url, {WiimUrlEncoding? encoding}) async {
+    // URL の末尾の track_id から長さを引く。曲ごとに尺が変わって見える。
+    final id =
+        int.tryParse(RegExp(r'/file/(\d+)\.flac').firstMatch(url)?.group(1) ?? '') ??
+        1;
+    _duration = _mockTrack(id).duration ?? const Duration(minutes: 3);
+    _base = Duration.zero;
+    _since = DateTime.now();
+    _state = WiimState.play;
+  }
+
+  @override
+  Future<void> pause() async {
+    _base = _position;
+    _since = null;
+    _state = WiimState.pause;
+  }
+
+  @override
+  Future<void> resume() async {
+    _since = DateTime.now();
+    _state = WiimState.play;
+  }
+
+  @override
+  Future<void> stop() async {
+    _base = Duration.zero;
+    _since = null;
+    _state = WiimState.stop;
+  }
+
+  @override
+  Future<void> seek(Duration position) async {
+    _base = position;
+    _since = _state == WiimState.play ? DateTime.now() : null;
+  }
+
+  @override
+  Future<void> setVolume(int level) async => _volume = level;
+
+  @override
+  Future<void> setMute(bool muted) async => _muted = muted;
+
+  @override
+  void close() {}
 }
