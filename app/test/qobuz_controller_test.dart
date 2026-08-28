@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:spotify_remote/models/qobuz_models.dart';
 import 'package:spotify_remote/state/playback_surface.dart';
 import 'package:spotify_remote/state/qobuz_controller.dart';
 
@@ -105,6 +106,56 @@ void main() {
 
     expect(controller.queue.map((e) => e.track.id), [1, 3]);
     expect(controller.toast, contains('除外'));
+  });
+
+  test('トーストは黙って消える', () async {
+    final (controller, _, _) = await started();
+    addTearDown(controller.dispose);
+
+    await controller.enqueueTracks([track(1)], label: 'パーティ 2026');
+    expect(controller.toast, contains('パーティ 2026'));
+
+    // **消し役がいないと画面の下に貼り付いたまま残る。**
+    await Future<void>.delayed(const Duration(seconds: 2, milliseconds: 300));
+
+    expect(controller.toast, isNull);
+  });
+
+  test('ライブラリから選んだリストはキューを置き換えて鳴り出す', () async {
+    final (controller, api, _) = await started();
+    addTearDown(controller.dispose);
+
+    await controller.enqueueTracks([track(1), track(2)]);
+    await controller.playPlaylist(
+      const QobuzPlaylist(id: 7, name: 'パーティ 2026', tracksCount: 2),
+    );
+
+    // **music の `playPlaylist` と同じ**——積み足しではなく差し替え。
+    expect(controller.queue.map((e) => e.track.id), [11, 12]);
+    expect(controller.currentTrack?.id, 11);
+    expect(api.fileUrlCalls, [1, 11]);
+    expect(controller.toast, contains('パーティ 2026 を再生'));
+  });
+
+  test('シャッフルを付けて流すと、すでに on でも並びが混ざる', () async {
+    final (controller, api, _) = await started();
+    addTearDown(controller.dispose);
+
+    api.playlistTracks = [for (var i = 1; i <= 40; i++) track(i)];
+    controller.setShuffle(true);
+
+    await controller.playPlaylist(
+      const QobuzPlaylist(id: 7, name: 'パーティ 2026', tracksCount: 40),
+      shuffle: true,
+    );
+
+    expect(controller.shuffleEnabled, isTrue);
+    // 先頭は鳴っている曲なので動かさない。後ろだけ混ざる。
+    expect(controller.currentTrack?.id, 1);
+    expect(
+      controller.upNext.map((e) => e.track.id),
+      isNot([for (var i = 2; i <= 40; i++) i]),
+    );
   });
 
   test('鳴っている曲より前を消しても現在位置がずれない', () async {

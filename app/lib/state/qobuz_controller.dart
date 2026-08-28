@@ -132,6 +132,10 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
   /// バッファするまで `stop` のままなので、その間は終了と読まない。
   static const _startGrace = Duration(seconds: 8);
 
+  /// トーストを出しておく時間。**music 側（`PlayerController.showToast`）と
+  /// 同じ長さ。** 音源が変わっても同じ間で消えないと、消し忘れに見える。
+  static const _toastDuration = Duration(seconds: 2);
+
   final QobuzCredentials _credentials;
   final WiimCredentials _wiimCredentials;
   final QobuzApi _api;
@@ -151,6 +155,7 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
 
   Timer? _poll;
   Timer? _searchTimer;
+  Timer? _toastTimer;
   Duration _backoff = _retryMin;
 
   WiimStatus? _wiimStatus;
@@ -355,8 +360,25 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
   }
 
   void dismissToast() {
+    _toastTimer?.cancel();
+    _toastTimer = null;
     if (_toast == null) return;
     _toast = null;
+    notifyListeners();
+  }
+
+  /// トーストを出す。**必ずここを通す。**
+  ///
+  /// `_toast` を直接入れると誰も消さないので、画面の下に文言が貼り付いたまま
+  /// 残る（「プレイリスト名をキューに追加」が消えない、の正体）。
+  void _showToast(String text) {
+    _toast = text;
+    _toastTimer?.cancel();
+    _toastTimer = Timer(_toastDuration, () {
+      if (_disposed) return;
+      _toast = null;
+      notifyListeners();
+    });
     notifyListeners();
   }
 
@@ -460,7 +482,7 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
       final keys = await QobuzBundle.discover();
       final winner = await _pickSecret(keys.appId, keys.secrets);
       await saveAppConfig(keys.appId, winner);
-      _toast = 'app_id / app_secret を取り直しました';
+      _showToast('app_id / app_secret を取り直しました');
       if (_account != null && _wiimConnection != null) await _connect();
     } on QobuzException catch (e) {
       _api.config = _app;
@@ -535,9 +557,9 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
 
       await _connect();
       if (keyError == null) {
-        _toast = 'Qobuz の鍵とログインを取り込みました';
+        _showToast('Qobuz の鍵とログインを取り込みました');
       } else {
-        _toast = 'Qobuz にログインしました（app_secret はまだです）';
+        _showToast('Qobuz にログインしました（app_secret はまだです）');
         _error = '$keyError。ログインは取り込めているので、'
             '「Web から取り直す」か手入力で app_secret だけ入れてください';
       }
@@ -896,6 +918,7 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
   Future<void> enqueueAlbum(
     QobuzAlbum album, {
     QobuzQueueOption option = QobuzQueueOption.add,
+    bool? shuffle,
   }) async {
     var tracks = album.tracks;
     if (tracks.isEmpty) {
@@ -903,12 +926,18 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
       if (full == null) return;
       tracks = full.tracks;
     }
-    await enqueueTracks(tracks, option: option, label: album.title);
+    await enqueueTracks(
+      tracks,
+      option: option,
+      label: album.title,
+      shuffle: shuffle,
+    );
   }
 
   Future<void> enqueuePlaylist(
     QobuzPlaylist playlist, {
     QobuzQueueOption option = QobuzQueueOption.add,
+    bool? shuffle,
   }) async {
     var tracks = playlist.tracks;
     if (tracks.isEmpty) {
@@ -918,8 +947,28 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
       if (full == null) return;
       tracks = full.tracks;
     }
-    await enqueueTracks(tracks, option: option, label: playlist.name);
+    await enqueueTracks(
+      tracks,
+      option: option,
+      label: playlist.name,
+      shuffle: shuffle,
+    );
   }
+
+  /// ライブラリで選んだ 1 件をキューごと差し替えて流す。
+  ///
+  /// **music の `PlayerController.playPlaylist` と同じ役。** あちらと同じく、
+  /// いまのキューが消える操作なので、呼ぶ前に画面側で確認を取ること
+  /// （`QueuePlayConfirm`）。シャッフルもあちらと同じくここで確定させる。
+  Future<void> playPlaylist(QobuzPlaylist playlist, {bool shuffle = false}) =>
+      enqueuePlaylist(
+        playlist,
+        option: QobuzQueueOption.play,
+        shuffle: shuffle,
+      );
+
+  Future<void> playAlbum(QobuzAlbum album, {bool shuffle = false}) =>
+      enqueueAlbum(album, option: QobuzQueueOption.play, shuffle: shuffle);
 
   /// キューに積む本体。
   ///
@@ -929,6 +978,7 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
     List<QobuzTrack> tracks, {
     QobuzQueueOption option = QobuzQueueOption.add,
     String? label,
+    bool? shuffle,
   }) async {
     final playable = tracks.where((t) => t.streamable).toList();
     if (playable.isEmpty) {
@@ -953,14 +1003,20 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
         // 何も鳴っていなければ、積んだ先頭から始める。
         if (_index < 0) _index = 0;
     }
-    _toast = switch (option) {
+    // **積み終わってから混ぜる。** `setShuffle` は「もう on」のときに素通り
+    // するので、差し替えた並びが混ざらないまま鳴り出してしまう。
+    if (shuffle != null) {
+      _shuffle = shuffle;
+      if (shuffle) _shuffleUpNext();
+    }
+    var message = switch (option) {
       QobuzQueueOption.play || QobuzQueueOption.replace => '$name を再生',
       QobuzQueueOption.next => '$name を次に',
       QobuzQueueOption.add => '$name をキューに追加',
     };
     final dropped = tracks.length - playable.length;
-    if (dropped > 0) _toast = '$_toast（鳴らせない $dropped 曲は除外）';
-    notifyListeners();
+    if (dropped > 0) message = '$message（鳴らせない $dropped 曲は除外）';
+    _showToast(message);
     final shouldStart =
         option == QobuzQueueOption.play ||
         option == QobuzQueueOption.replace ||
@@ -1026,8 +1082,7 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
       // 1 曲鳴らせないだけでキューを止めない。次へ送る。
       // **バナーではなくトーストに出す。** 次の曲が鳴り出した時点で
       // バナーは消えてしまい、何が起きたのか分からなくなる。
-      _toast = '${item.track.displayTitle}: ${e.message}';
-      notifyListeners();
+      _showToast('${item.track.displayTitle}: ${e.message}');
       if (_index + 1 < _queue.length) {
         _index += 1;
         await _playCurrent();
@@ -1197,6 +1252,7 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
     _disposed = true;
     _poll?.cancel();
     _searchTimer?.cancel();
+    _toastTimer?.cancel();
     _api.close();
     _wiim.close();
     _discovery.close();

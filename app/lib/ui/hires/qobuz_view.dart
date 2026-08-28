@@ -14,11 +14,23 @@ import 'qobuz_setup_screen.dart';
 ///
 /// music（Spotify）とは**混ぜない。** 壁掛けで人が入れ替わりながら触るので、
 /// いまどちらを操作しているのかが曖昧だと事故る。作法だけ music に寄せる。
-class QobuzView extends StatelessWidget {
+class QobuzView extends StatefulWidget {
   const QobuzView({super.key, required this.controller, this.onOpenMenu});
 
   final QobuzController controller;
   final VoidCallback? onOpenMenu;
+
+  @override
+  State<QobuzView> createState() => _QobuzViewState();
+}
+
+class _QobuzViewState extends State<QobuzView> {
+  /// 確認待ちのライブラリ行。**music の `_pendingPlaylist` と同じ持ち方**——
+  /// コントローラではなく画面が持つ。閉じれば何も起きない一時的な状態なので、
+  /// 状態機械（`QobuzController`）に足すと復元の面倒だけが増える。
+  _PendingPlay? _pending;
+
+  QobuzController get controller => widget.controller;
 
   @override
   Widget build(BuildContext context) {
@@ -28,7 +40,7 @@ class QobuzView extends StatelessWidget {
         if (controller.needsSetup) {
           return QobuzSetupScreen(
             controller: controller,
-            onOpenMenu: onOpenMenu ?? () {},
+            onOpenMenu: widget.onOpenMenu ?? () {},
           );
         }
         return LayoutBuilder(
@@ -57,11 +69,13 @@ class QobuzView extends StatelessWidget {
                               controller: controller,
                               topInset: contentTop,
                               menu: _menu(),
+                              onAskPlay: _askPlay,
                             )
                           : _PhoneBody(
                               controller: controller,
                               topInset: contentTop,
                               menu: _menu(),
+                              onAskPlay: _askPlay,
                             ),
                     ),
                     if (controller.errorBanner != null)
@@ -74,6 +88,23 @@ class QobuzView extends StatelessWidget {
                           topPad: topPad,
                         ),
                       ),
+                    // **確認はトーストより下、バナーより上。** music 側と
+                    // 同じ重なり順（`ControllerScreen`）。
+                    if (_pending != null)
+                      Positioned.fill(
+                        child: QueuePlayConfirm(
+                          name: _pending!.name,
+                          queueCount: controller.upNext.length,
+                          initialShuffle: controller.shuffleEnabled,
+                          onConfirm: (shuffle) {
+                            final pending = _pending!;
+                            setState(() => _pending = null);
+                            pending.play(shuffle);
+                          },
+                          onCancel: () => setState(() => _pending = null),
+                        ),
+                      ),
+
                     if (controller.toast != null)
                       Positioned(
                         left: 20,
@@ -91,12 +122,28 @@ class QobuzView extends StatelessWidget {
     );
   }
 
+  void _askPlay(_PendingPlay pending) => setState(() => _pending = pending);
+
   Widget? _menu() {
-    final onOpenMenu = this.onOpenMenu;
+    final onOpenMenu = widget.onOpenMenu;
     if (onOpenMenu == null) return null;
     return MenuButton(onPressed: onOpenMenu);
   }
 }
+
+/// 確認ダイアログに出している「これから流すもの」。
+///
+/// プレイリストとアルバムで型が違うだけなので、名前と「押されたら何をするか」
+/// にまで潰して持つ。
+class _PendingPlay {
+  const _PendingPlay({required this.name, required this.play});
+
+  final String name;
+  final void Function(bool shuffle) play;
+}
+
+/// ライブラリ行から確認ダイアログを開く口。
+typedef _AskPlay = void Function(_PendingPlay pending);
 
 /// エラーの帯の高さ。**中身を下げる量と一致させる**（music の停止バナーと同型）。
 const double _bannerHeight = 52;
@@ -107,11 +154,13 @@ class _PhoneBody extends StatelessWidget {
     required this.controller,
     required this.topInset,
     required this.menu,
+    required this.onAskPlay,
   });
 
   final QobuzController controller;
   final double topInset;
   final Widget? menu;
+  final _AskPlay onAskPlay;
 
   @override
   Widget build(BuildContext context) {
@@ -127,7 +176,7 @@ class _PhoneBody extends StatelessWidget {
         open: controller.sheetOpen,
         onToggle: controller.toggleSheet,
         peek: _SheetPeek(controller: controller),
-        body: _SheetBody(controller: controller),
+        body: _SheetBody(controller: controller, onAskPlay: onAskPlay),
       ),
     );
   }
@@ -139,11 +188,13 @@ class _TabletBody extends StatelessWidget {
     required this.controller,
     required this.topInset,
     required this.menu,
+    required this.onAskPlay,
   });
 
   final QobuzController controller;
   final double topInset;
   final Widget? menu;
+  final _AskPlay onAskPlay;
 
   @override
   Widget build(BuildContext context) {
@@ -175,7 +226,11 @@ class _TabletBody extends StatelessWidget {
             onSeek: controller.controlsEnabled ? controller.seek : null,
             transport: _Transport(controller: controller, compact: false),
             tabs: _Tabs(controller: controller),
-            panel: _PanelBody(controller: controller),
+            panel: _PanelBody(
+              controller: controller,
+              onAskPlay: onAskPlay,
+              compact: false,
+            ),
           ),
         ),
       ],
@@ -292,9 +347,10 @@ class _SheetPeek extends StatelessWidget {
 
 /// 開いたときの中身（タブ + パネル）。music の `_SheetBody` と同じ余白。
 class _SheetBody extends StatelessWidget {
-  const _SheetBody({required this.controller});
+  const _SheetBody({required this.controller, required this.onAskPlay});
 
   final QobuzController controller;
+  final _AskPlay onAskPlay;
 
   @override
   Widget build(BuildContext context) {
@@ -314,7 +370,11 @@ class _SheetBody extends StatelessWidget {
               18,
               18 + MediaQuery.paddingOf(context).bottom,
             ),
-            child: _PanelBody(controller: controller),
+            child: _PanelBody(
+              controller: controller,
+              onAskPlay: onAskPlay,
+              compact: true,
+            ),
           ),
         ),
       ],
@@ -322,7 +382,12 @@ class _SheetBody extends StatelessWidget {
   }
 }
 
-/// キュー / ライブラリ / 検索。**見た目は music の `RailTabs` と同じ部品。**
+/// Up next / Library / Add tracks。
+///
+/// **文言も並びも music の [RailTabs] に合わせる。** 音源を切り替えても
+/// 同じ言葉が同じ順で並んでいないと、壁掛けでは別のアプリに見える。
+/// 「Search」ではなく「Add tracks」なのは、ここが探す場所ではなく
+/// **積む場所**だから（music 側と同じ理由）。
 class _Tabs extends StatelessWidget {
   const _Tabs({required this.controller});
 
@@ -330,11 +395,12 @@ class _Tabs extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final upNext = controller.upNext.length;
     return SegmentedTabs(
       tabs: [
         TabButton(
-          label: upNext == 0 ? 'Up next' : 'Up next ($upNext)',
+          // 文言は `RailTabs.defaultLabel` と同じもの。あちらは `RailTab`、
+          // こちらは `QobuzTab` と持ち物が違うので、共有するのは言葉だけ。
+          label: 'Up next',
           active: controller.tab == QobuzTab.queue,
           onTap: () => controller.selectTab(QobuzTab.queue),
         ),
@@ -344,7 +410,7 @@ class _Tabs extends StatelessWidget {
           onTap: () => controller.selectTab(QobuzTab.library),
         ),
         TabButton(
-          label: 'Search',
+          label: 'Add tracks',
           active: controller.tab == QobuzTab.search,
           onTap: () => controller.selectTab(QobuzTab.search),
         ),
@@ -354,14 +420,24 @@ class _Tabs extends StatelessWidget {
 }
 
 class _PanelBody extends StatelessWidget {
-  const _PanelBody({required this.controller});
+  const _PanelBody({
+    required this.controller,
+    required this.onAskPlay,
+    required this.compact,
+  });
 
   final QobuzController controller;
+  final _AskPlay onAskPlay;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) => switch (controller.tab) {
     QobuzTab.queue => _QueueList(controller: controller),
-    QobuzTab.library => _LibraryPanel(controller: controller),
+    QobuzTab.library => _LibraryPanel(
+      controller: controller,
+      onAskPlay: onAskPlay,
+      compact: compact,
+    ),
     QobuzTab.search => _SearchPanel(controller: controller),
   };
 }
@@ -728,11 +804,22 @@ class _QueueList extends StatelessWidget {
   }
 }
 
-/// プレイリストとお気に入り。1 段だけ潜って中身を出す。
+/// プレイリストとお気に入り。**music の `PlaylistsPanel` と同じ流れ。**
+///
+/// 行を選ぶ＝そのリストを流す（確認を挟んでキューを置き換える）。あちらの
+/// Playlists タブと同じ動きにしてある。前は行のタップが「中身を開く」で、
+/// 積むのは右端の小さなアイコン 2 つ——同じ見た目の行が音源ごとに違う意味を
+/// 持っていた。中身を見たいときは行の「曲を見る」から入る。
 class _LibraryPanel extends StatelessWidget {
-  const _LibraryPanel({required this.controller});
+  const _LibraryPanel({
+    required this.controller,
+    required this.onAskPlay,
+    required this.compact,
+  });
 
   final QobuzController controller;
+  final _AskPlay onAskPlay;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -761,17 +848,18 @@ class _LibraryPanel extends StatelessWidget {
             child: CapsLabel('プレイリスト', size: 10),
           ),
           for (final playlist in playlists)
-            _TrackRow(
+            _LibraryRow(
               title: playlist.name,
               subtitle: '${playlist.tracksCount} 曲',
               imageUrl: playlist.imageUrl,
-              onTap: () => controller.openPlaylist(playlist),
-              trailing: _AddButton(
-                onNext: () => controller.enqueuePlaylist(
-                  playlist,
-                  option: QobuzQueueOption.next,
+              compact: compact,
+              onOpen: () => controller.openPlaylist(playlist),
+              onPlay: () => onAskPlay(
+                _PendingPlay(
+                  name: playlist.name,
+                  play: (shuffle) =>
+                      controller.playPlaylist(playlist, shuffle: shuffle),
                 ),
-                onAdd: () => controller.enqueuePlaylist(playlist),
               ),
             ),
         ],
@@ -781,22 +869,145 @@ class _LibraryPanel extends StatelessWidget {
             child: CapsLabel('お気に入りのアルバム', size: 10),
           ),
           for (final album in albums)
-            _TrackRow(
+            _LibraryRow(
               title: album.title,
-              subtitle: album.artist,
+              subtitle: album.artist ?? '',
               imageUrl: album.imageUrl,
               hires: album.hires,
-              onTap: () => controller.openAlbum(album),
-              trailing: _AddButton(
-                onNext: () => controller.enqueueAlbum(
-                  album,
-                  option: QobuzQueueOption.next,
+              compact: compact,
+              onOpen: () => controller.openAlbum(album),
+              onPlay: () => onAskPlay(
+                _PendingPlay(
+                  name: album.title,
+                  play: (shuffle) =>
+                      controller.playAlbum(album, shuffle: shuffle),
                 ),
-                onAdd: () => controller.enqueueAlbum(album),
               ),
             ),
         ],
+        Padding(
+          padding: const EdgeInsets.fromLTRB(10, 16, 10, 2),
+          child: Text(
+            '選ぶとキューを置き換えて流します。'
+            '足すだけなら「曲を見る」から 1 曲ずつ、または「すべて追加」で。',
+            style: AppText.body(12, color: AppColors.white(0.28), height: 1.6),
+          ),
+        ),
       ],
+    );
+  }
+}
+
+/// ライブラリの 1 行。**music の `_PlaylistRow` と同じ寸法・同じ役。**
+///
+/// スマホは行全体で押せて、iPad は右端の Play。並びも文言もあちらに揃える。
+/// Qobuz にしか無いのは「曲を見る」（中身に潜る）と HI-RES の印だけ。
+class _LibraryRow extends StatelessWidget {
+  const _LibraryRow({
+    required this.title,
+    required this.subtitle,
+    required this.imageUrl,
+    required this.compact,
+    required this.onOpen,
+    required this.onPlay,
+    this.hires = false,
+  });
+
+  final String title;
+  final String subtitle;
+  final String? imageUrl;
+  final bool compact;
+  final bool hires;
+
+  /// 中身を開く（1 曲ずつ積みたいとき）。
+  final VoidCallback onOpen;
+
+  /// このまとまりを流す。確認を挟むので、押しても即座には鳴らない。
+  final VoidCallback onPlay;
+
+  @override
+  Widget build(BuildContext context) {
+    return HoverRow(
+      // スマホは行全体タップ、iPad は右端の Play ボタン（music と同じ）。
+      onTap: compact ? onPlay : null,
+      padding: EdgeInsets.all(compact ? 8 : 10),
+      radius: const BorderRadius.all(Radius.circular(14)),
+      child: Row(
+        children: [
+          Artwork(
+            url: imageUrl,
+            size: compact ? 52 : 62,
+            radius: compact
+                ? const BorderRadius.all(Radius.circular(5))
+                : AppRadius.thumb,
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppText.body(
+                          compact ? 15 : 17,
+                          weight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                    if (hires) ...[
+                      const SizedBox(width: 8),
+                      const CapsLabel(
+                        'HI-RES',
+                        size: 9,
+                        color: AppColors.green,
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppText.body(
+                    compact ? 11 : 12,
+                    color: AppColors.white(0.45),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          IconButton(
+            onPressed: onOpen,
+            tooltip: '曲を見る',
+            icon: Icon(
+              Icons.queue_music_rounded,
+              size: 20,
+              color: AppColors.white(0.5),
+            ),
+          ),
+          if (compact)
+            Icon(
+              Icons.play_arrow_rounded,
+              color: AppColors.white(0.5),
+              size: 22,
+            )
+          else
+            WhiteButton(
+              label: 'Play',
+              onPressed: onPlay,
+              fontSize: 14,
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+            ),
+        ],
+      ),
     );
   }
 }

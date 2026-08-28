@@ -111,6 +111,19 @@ class FakeQobuzApi extends QobuzApi {
   @override
   Future<QobuzFavorites> favorites({int limit = 100}) async => favoritesResult;
 
+  /// `playlist/get?extra=tracks` が返す中身。**一覧の `tracks` は空**なので、
+  /// ライブラリから 1 件選んで流す経路は必ずここを通る。
+  List<QobuzTrack> playlistTracks = [track(11), track(12)];
+
+  @override
+  Future<QobuzPlaylist> playlist(int playlistId, {int? ownerUserId}) async =>
+      QobuzPlaylist(
+        id: playlistId,
+        name: 'プレイリスト $playlistId',
+        tracksCount: playlistTracks.length,
+        tracks: playlistTracks,
+      );
+
   @override
   Future<QobuzFileUrl> fileUrl(
     int trackId, {

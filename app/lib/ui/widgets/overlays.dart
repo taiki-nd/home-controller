@@ -290,6 +290,105 @@ class _PlaylistConfirmState extends State<PlaylistConfirm> {
   }
 }
 
+/// 音源に依らない「このまとまりを流す」確認（Qobuz のライブラリ用）。
+///
+/// **[PlaylistConfirm] と同じ器・同じ問い・同じボタンの並び。** 壁掛けで人が
+/// 入れ替わりながら触るので、SPOTIFY と QOBUZ で「キューが消える」の伝え方が
+/// 違うと事故る。Spotify 側は `PlaylistSummary` に張り付いているので、
+/// こちらは名前と曲数だけ受ける形で切り出してある。
+class QueuePlayConfirm extends StatefulWidget {
+  const QueuePlayConfirm({
+    super.key,
+    required this.name,
+    required this.queueCount,
+    required this.initialShuffle,
+    required this.onConfirm,
+    required this.onCancel,
+  });
+
+  /// 流すプレイリスト / アルバムの名前。
+  final String name;
+
+  /// いま積まれている「これから」の曲数。破棄されるぶん。
+  final int queueCount;
+
+  final bool initialShuffle;
+  final void Function(bool shuffle) onConfirm;
+  final VoidCallback onCancel;
+
+  @override
+  State<QueuePlayConfirm> createState() => _QueuePlayConfirmState();
+}
+
+class _QueuePlayConfirmState extends State<QueuePlayConfirm> {
+  late bool _shuffle = widget.initialShuffle;
+
+  @override
+  Widget build(BuildContext context) {
+    return _Scrim(
+      onTapOutside: widget.onCancel,
+      child: _DialogCard(
+        maxWidth: 460,
+        children: [
+          CapsLabel('Set queue', size: 11, color: AppColors.white(0.4)),
+          const SizedBox(height: 14),
+          Text(
+            '「${widget.name}」から再生',
+            style: AppText.body(
+              26,
+              weight: FontWeight.w900,
+              height: 1.25,
+              letterSpacing: -0.5,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'キューをこのリストで置き換えます。'
+            '現在のキュー（${widget.queueCount} 曲）は破棄されます。',
+            style: AppText.body(15, color: AppColors.white(0.62), height: 1.8),
+          ),
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+            decoration: BoxDecoration(
+              borderRadius: const BorderRadius.all(Radius.circular(14)),
+              color: AppColors.white(0.05),
+              border: Border.all(color: AppColors.white(0.1)),
+            ),
+            child: Row(
+              children: [
+                ShuffleSwitch(
+                  value: _shuffle,
+                  onChanged: (value) => setState(() => _shuffle = value),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    _shuffle ? 'Shuffle on' : 'Shuffle off',
+                    style: AppText.body(15, weight: FontWeight.w900),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              WhiteButton(
+                label: 'このリストを再生',
+                onPressed: () => widget.onConfirm(_shuffle),
+              ),
+              OutlineButton(label: 'キャンセル', onPressed: widget.onCancel),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// プレイリストから 1 曲外す確認。
 ///
 /// 再生は止まらない（Spotify は鳴っている曲を消してもそのまま流し切る）が、

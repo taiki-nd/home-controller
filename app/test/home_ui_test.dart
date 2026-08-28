@@ -15,6 +15,7 @@ import 'package:spotify_remote/ui/home/home_screen.dart';
 import 'package:spotify_remote/ui/hires/qobuz_setup_screen.dart';
 import 'package:spotify_remote/ui/home/widgets/home_tiles.dart';
 import 'package:spotify_remote/ui/widgets/atoms.dart';
+import 'package:spotify_remote/ui/widgets/overlays.dart';
 import 'package:spotify_remote/ui/widgets/transport.dart';
 import 'package:spotify_remote/ui/music/music_view.dart';
 
@@ -374,19 +375,7 @@ void main() {
     // 偽 Qobuz / 偽 WiiM を挿し忘れると設定画面から先へ進めなくなり、
     // ブラウザで開くまで気づけない。
     await setSurface(tester, _ipad);
-
-    await tester.pumpWidget(const MockApp());
-    await tester.pump(const Duration(milliseconds: 400));
-    drainImageErrors(tester);
-
-    tester.state<ScaffoldState>(find.byType(Scaffold).first).openDrawer();
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
-    await tester.tap(
-      find.descendant(of: find.byType(Drawer), matching: find.text('QOBUZ')),
-    );
-    await tester.pump(const Duration(milliseconds: 400));
-    drainImageErrors(tester);
+    await openQobuz(tester);
 
     // 設定済みで始まるので、設定画面ではなく再生画面が出る。
     expect(find.byType(QobuzSetupScreen), findsNothing);
@@ -397,6 +386,69 @@ void main() {
     await tester.pump(const Duration(seconds: 16));
     drainImageErrors(tester);
   });
+
+  testWidgets('QOBUZ: タブの文言と、ライブラリから流す流れが music と揃っている', (tester) async {
+    // **揃っているかは画面でしか分からない。** タブの文言も、行を選んだときに
+    // 確認が出るかも、コントローラのテストでは素通りしてしまう。
+    await setSurface(tester, _ipad);
+    await openQobuz(tester);
+
+    // music の RailTabs と同じ言葉・同じ順。
+    expect(find.text('Up next'), findsWidgets);
+    expect(find.text('Library'), findsOneWidget);
+    expect(find.text('Add tracks'), findsOneWidget);
+    // 「Search」だった名残が残っていないこと。
+    expect(find.text('Search'), findsNothing);
+
+    await tester.tap(find.text('Library'));
+    await tester.pump(const Duration(milliseconds: 400));
+    drainImageErrors(tester);
+
+    expect(find.text('夜の作業'), findsOneWidget);
+
+    // iPad は右端の Play。music の Playlists タブと同じ位置・同じ文言。
+    await tester.tap(find.widgetWithText(WhiteButton, 'Play').first);
+    await tester.pump(const Duration(milliseconds: 400));
+    drainImageErrors(tester);
+
+    // 押した瞬間には鳴らない。**キューが消えることを先に伝える。**
+    expect(find.byType(QueuePlayConfirm), findsOneWidget);
+    expect(find.text('「夜の作業」から再生'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(WhiteButton, 'このリストを再生'));
+    await tester.pump(const Duration(milliseconds: 400));
+    drainImageErrors(tester);
+
+    expect(find.byType(QueuePlayConfirm), findsNothing);
+    // 積んだ知らせは出る。**そして黙って消える。**
+    expect(find.byType(AppToast), findsOneWidget);
+    await tester.pump(const Duration(seconds: 3));
+    drainImageErrors(tester);
+    expect(find.byType(AppToast), findsNothing);
+
+    await tester.pump(const Duration(seconds: 16));
+    drainImageErrors(tester);
+  });
+}
+
+/// モックアプリを起動して Drawer から QOBUZ の再生画面まで進める。
+Future<void> openQobuz(WidgetTester tester) async {
+  await tester.pumpWidget(const MockApp());
+  await tester.pump(const Duration(milliseconds: 400));
+  drainImageErrors(tester);
+
+  tester.state<ScaffoldState>(find.byType(Scaffold).first).openDrawer();
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
+  await tester.tap(
+    find.descendant(of: find.byType(Drawer), matching: find.text('QOBUZ')),
+  );
+  // **Drawer が閉じ切るまで進める。** 閉じ途中は scrim が触りを吸うので、
+  // ここで足りないと後続のタップが黙って外れる。
+  for (var i = 0; i < 3; i++) {
+    await tester.pump(const Duration(milliseconds: 400));
+  }
+  drainImageErrors(tester);
 }
 
 /// モックのアートワークは web/mock/*.png を HTTP で読む。テスト環境では必ず
