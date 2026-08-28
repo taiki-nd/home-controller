@@ -398,6 +398,17 @@ music と混ぜない）。
   これが無いと `notifyListeners` がどこにも届かない。
   **「Web から取り直す」を押しても進行中もエラーも何も出ない**という
   壊れ方をしていたのがこれ
+- **再生画面は music と同じ作法に揃える**（`PlaybackSurface`）。
+  Spotify（`PlayerController`）と Qobuz（`QobuzController`）は中身がまるで
+  別物だが、「いま何が鳴っていて、送る・止める・シークする」という画面から
+  見た形は同じなので、そこだけを抜いた口を両方に実装させ、`ProgressRow` /
+  `TransportControls` / `SwipeSkip` / `OrbitingLight` / `ArtworkBackdrop` を
+  共有する。**配色の抽出も共通**（`ArtworkPaletteResolver`）——出どころが
+  同じでも掛け方が違うと、音源を切り替えたときに別物に見える。
+  片方にしか無いもの（Spotify のプレイリスト、Qobuz の音質バッジ・
+  シャッフル・リピート）は口に入れず、各画面が自分のコントローラを直に見る
+- Drawer の名前は **SPOTIFY / QOBUZ**。「MUSIC / HI-RES」だと何が鳴るのかが
+  分からない（HI-RES は音質バッジの語としても使っているので紛らわしい）
 - 入口は**アプリ内ブラウザ（§3.2）1 つ**。手入力とメール + パスワードは
   「うまくいかないときは」に畳む。**残しはする**——非公式の経路なので、
   いつ空振りしてもおかしくない

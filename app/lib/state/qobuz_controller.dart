@@ -12,6 +12,7 @@ import '../services/qobuz_web_login.dart';
 import '../services/wiim_api.dart';
 import '../services/wiim_credentials.dart';
 import '../services/wiim_discovery.dart';
+import 'playback_surface.dart';
 
 /// 画面が知りたい状態。
 enum QobuzStatus {
@@ -100,7 +101,7 @@ class QobuzListing {
 /// PlayQueue1 側）、署名付き URL は 24 時間で失効する。だから WiiM には
 /// **1 曲ずつ URL を投げ、曲の終わりを見て次を送る**（§5.3 の方式 A）。
 /// 次に再生・末尾に追加・並べ替え・削除がすべて手の内に入るのはこの形の利点。
-class QobuzController extends ChangeNotifier {
+class QobuzController extends ChangeNotifier implements PlaybackSurface {
   QobuzController({
     QobuzCredentials? credentials,
     WiimCredentials? wiimCredentials,
@@ -155,6 +156,11 @@ class QobuzController extends ChangeNotifier {
   WiimStatus? _wiimStatus;
   WiimDevice? _device;
 
+  /// **Spotify 側と同じ絵作りにする**ため、抽出は共通のものを使う
+  /// （`ArtworkPaletteResolver`）。ここが食い違うと、音源を切り替えたときに
+  /// 同じ絵柄でも背景の印象が変わってしまう。
+  final ArtworkPaletteResolver _paletteResolver = ArtworkPaletteResolver();
+
   List<WiimCandidate> _candidates = const [];
   bool _scanning = false;
   int _scanDone = 0;
@@ -173,6 +179,9 @@ class QobuzController extends ChangeNotifier {
   bool _encodingConfirmed = false;
 
   QobuzTab _tab = QobuzTab.queue;
+
+  /// スマホのボトムシートが開いているか（music 側と同じ作法）。
+  bool _sheetOpen = false;
   String _query = '';
   QobuzSearchResults _results = const QobuzSearchResults();
   bool _searchBusy = false;
@@ -186,6 +195,7 @@ class QobuzController extends ChangeNotifier {
   ///
   /// ポーリングのたびに [notifyListeners] を叩くと画面全部が毎秒作り直しに
   /// なるので、進捗の購読者だけ分ける（Spotify / MA 側と同じ）。
+  @override
   final ChangeNotifier progressTick = ChangeNotifier();
 
   // ── 参照 ────────────────────────────────────────────────────────────
@@ -217,6 +227,15 @@ class QobuzController extends ChangeNotifier {
       _scanTotal == 0 ? 0 : (_scanDone / _scanTotal).clamp(0.0, 1.0);
 
   QobuzTab get tab => _tab;
+  bool get sheetOpen => _sheetOpen;
+
+  /// シートを閉じているときに 1 行だけ見せる曲。
+  QobuzTrack? get nextTrack => upNext.isEmpty ? null : upNext.first.track;
+
+  void toggleSheet() {
+    _sheetOpen = !_sheetOpen;
+    notifyListeners();
+  }
   String get query => _query;
   QobuzSearchResults get results => _results;
   bool get searchBusy => _searchBusy;
@@ -241,10 +260,25 @@ class QobuzController extends ChangeNotifier {
   bool get shuffleEnabled => _shuffle;
   QobuzRepeatMode get repeatMode => _repeat;
 
+  @override
+  ArtworkPalette get palette => _paletteResolver.palette;
+
+  @override
   bool get isPlaying => _wiimStatus?.isPlaying ?? false;
+
+  /// 鳴らすものが無い。**時間の表示を 0 に伏せるのに使う。**
+  @override
+  bool get isStopped => currentTrack == null;
+
+  /// WiiM に届いていて、かつ鳴らすものがあるときだけ押させる。
+  /// **両方要る**——繋がっていても空のキューでは送る先が無い。
+  @override
+  bool get controlsEnabled =>
+      _status == QobuzStatus.connected && currentItem != null;
   int get volume => _wiimStatus?.volume ?? 0;
   bool get muted => _wiimStatus?.muted ?? false;
 
+  @override
   Duration get position =>
       _wiimStatus?.correctedPosition(DateTime.now()) ?? Duration.zero;
 
@@ -252,12 +286,14 @@ class QobuzController extends ChangeNotifier {
   ///
   /// **WiiM の `totlen` を鵜呑みにしない。** FLAC のストリームでは 0 で
   /// 返ることがあるので、そのときは Qobuz 側のメタデータで補う。
+  @override
   Duration get duration {
     final reported = _wiimStatus?.duration ?? Duration.zero;
     if (reported > Duration.zero) return reported;
     return currentTrack?.duration ?? Duration.zero;
   }
 
+  @override
   double get progressFraction {
     final total = duration.inMilliseconds;
     if (total <= 0) return 0;
@@ -725,6 +761,7 @@ class QobuzController extends ChangeNotifier {
 
   // ── 再生 ────────────────────────────────────────────────────────────
 
+  @override
   Future<void> togglePlayPause() async {
     if (currentItem == null) return;
     try {
@@ -743,8 +780,10 @@ class QobuzController extends ChangeNotifier {
     }
   }
 
+  @override
   Future<void> skipNext() => _advance(manual: true);
 
+  @override
   Future<void> skipPrevious() async {
     // 曲頭でなければ頭出し。壁掛けで押し間違えたときに前の曲へ飛ばない。
     if (position > const Duration(seconds: 3)) {
@@ -957,6 +996,9 @@ class QobuzController extends ChangeNotifier {
   Future<void> _playCurrent({bool retry = false}) async {
     final item = currentItem;
     if (item == null) return;
+    // 背景の色は「いま鳴らすもの」から。**送るのと同じ入口で拾う**ので、
+    // どの経路（タップ・曲送り・キュー入れ替え）から来ても取りこぼさない。
+    unawaited(_updatePalette(item.track.imageUrl));
     if (_wiimConnection == null) {
       _fail('WiiM の IP が設定されていません');
       return;
@@ -1038,6 +1080,9 @@ class QobuzController extends ChangeNotifier {
   void selectTab(QobuzTab value) {
     if (_tab == value) return;
     _tab = value;
+    // キュー以外を選んだらシートを開ける。**閉じたまま切り替えても
+    // 1 行プレビューしか見えず、選んだ意味が無い**（music 側と同じ）。
+    if (value != QobuzTab.queue) _sheetOpen = true;
     notifyListeners();
   }
 
@@ -1124,6 +1169,11 @@ class QobuzController extends ChangeNotifier {
       return;
     }
     _fail(e.message);
+  }
+
+  Future<void> _updatePalette(String? url) async {
+    final changed = await _paletteResolver.resolve(url);
+    if (changed && !_disposed) notifyListeners();
   }
 
   void _fail(String message) {

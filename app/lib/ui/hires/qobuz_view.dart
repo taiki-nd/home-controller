@@ -3,8 +3,11 @@ import 'package:flutter/material.dart';
 import '../../models/qobuz_models.dart';
 import '../../state/qobuz_controller.dart';
 import '../../theme/tokens.dart';
+import '../widgets/artwork_backdrop.dart';
+import '../widgets/overlays.dart';
 import '../widgets/atoms.dart';
-import '../widgets/marquee_text.dart';
+import '../widgets/source_layout.dart';
+import '../widgets/transport.dart';
 import 'qobuz_setup_screen.dart';
 
 /// hi-res モードの入口（`docs/qobuz-wiim-integration.md` §7）。
@@ -28,72 +31,360 @@ class QobuzView extends StatelessWidget {
             onOpenMenu: onOpenMenu ?? () {},
           );
         }
-        return Scaffold(
-          backgroundColor: AppColors.bg,
-          body: SafeArea(
-            child: Column(
-              children: [
-                _Header(controller: controller, onOpenMenu: onOpenMenu),
-                if (controller.errorBanner != null)
-                  _ErrorBanner(controller: controller),
-                Expanded(
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final wide = constraints.maxWidth >= kTabletBreakpoint;
-                      final nowPlaying = _NowPlaying(
-                        controller: controller,
-                        compact: !wide,
-                      );
-                      final panel = _Panel(controller: controller);
-                      if (!wide) {
-                        return Column(
-                          children: [
-                            nowPlaying,
-                            Expanded(child: panel),
-                          ],
-                        );
-                      }
-                      return Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Expanded(flex: 5, child: Center(child: nowPlaying)),
-                          SizedBox(
-                            width: 1,
-                            child: ColoredBox(color: AppColors.white(0.06)),
-                          ),
-                          Expanded(flex: 4, child: panel),
-                        ],
-                      );
-                    },
-                  ),
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            // **骨組みは music の `ControllerScreen` と同じ。** 画面いっぱいに
+            // 敷いて（SafeArea を掛けず）、帯のぶんは中身だけ下げる。そうしないと
+            // ステータスバーの帯が背景グラデ 1 枚になり、レールの面と境界線が
+            // 帯の手前で途切れる。
+            final wide = constraints.maxWidth >= kTabletBreakpoint;
+            final topPad = MediaQuery.paddingOf(context).top;
+            // 帯の下にエラーが出ているぶんも中身を下げる。
+            final contentTop =
+                topPad + (controller.errorBanner != null ? _bannerHeight : 0);
+
+            return Scaffold(
+              backgroundColor: AppColors.frameBg,
+              body: ArtworkBackdrop(
+                palette: controller.palette,
+                stopped: controller.isStopped,
+                wide: wide,
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: wide
+                          ? _TabletBody(
+                              controller: controller,
+                              topInset: contentTop,
+                              menu: _menu(),
+                            )
+                          : _PhoneBody(
+                              controller: controller,
+                              topInset: contentTop,
+                              menu: _menu(),
+                            ),
+                    ),
+                    if (controller.errorBanner != null)
+                      Positioned(
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        child: _ErrorBanner(
+                          controller: controller,
+                          topPad: topPad,
+                        ),
+                      ),
+                    if (controller.toast != null)
+                      Positioned(
+                        left: 20,
+                        right: 20,
+                        bottom: 34,
+                        child: Center(child: AppToast(text: controller.toast!)),
+                      ),
+                  ],
                 ),
-              ],
-            ),
-          ),
+              ),
+            );
+          },
         );
       },
     );
   }
+
+  Widget? _menu() {
+    final onOpenMenu = this.onOpenMenu;
+    if (onOpenMenu == null) return null;
+    return MenuButton(onPressed: onOpenMenu);
+  }
 }
 
-/// ☰ / モード名 / WiiM のピル（タップで音量）。
-class _Header extends StatelessWidget {
-  const _Header({required this.controller, this.onOpenMenu});
+/// エラーの帯の高さ。**中身を下げる量と一致させる**（music の停止バナーと同型）。
+const double _bannerHeight = 52;
+
+/// iPhone。music の `PhoneLayout` と同じ——now playing の上にシートが被さる。
+class _PhoneBody extends StatelessWidget {
+  const _PhoneBody({
+    required this.controller,
+    required this.topInset,
+    required this.menu,
+  });
 
   final QobuzController controller;
-  final VoidCallback? onOpenMenu;
+  final double topInset;
+  final Widget? menu;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 8, 16, 8),
-      child: Row(
+    return PhoneSourceScaffold(
+      topInset: topInset,
+      sheetOpen: controller.sheetOpen,
+      nowPlaying: _NowPlaying(
+        controller: controller,
+        topInset: topInset,
+        menu: menu,
+      ),
+      sheet: SourceSheet(
+        open: controller.sheetOpen,
+        onToggle: controller.toggleSheet,
+        peek: _SheetPeek(controller: controller),
+        body: _SheetBody(controller: controller),
+      ),
+    );
+  }
+}
+
+/// iPad。music の `TabletLayout` と同じ——左に大判、右に幅 452 のレール。
+class _TabletBody extends StatelessWidget {
+  const _TabletBody({
+    required this.controller,
+    required this.topInset,
+    required this.menu,
+  });
+
+  final QobuzController controller;
+  final double topInset;
+  final Widget? menu;
+
+  @override
+  Widget build(BuildContext context) {
+    final track = controller.currentTrack;
+    return Row(
+      children: [
+        Expanded(
+          child: TabletNowPlaying(
+            controller: controller,
+            topInset: topInset,
+            artworkUrl: track?.imageUrl,
+            metaLine:
+                _metaLine(track) ??
+                (controller.isStopped ? 'LAST PLAYED' : 'NOW PLAYING'),
+            title: track?.displayTitle ?? '再生していません',
+            header: _HeaderRow(controller: controller, menu: menu),
+            // **ハイレゾかどうかはここでしか分からない。** WiiM の画面を見に
+            // 行かずに済むよう、メタ行の右端に出す（§3 の落とし穴 6）。
+            metaTrailing: track?.qualityLabel == null
+                ? null
+                : _QualityBadge(track: track!),
+          ),
+        ),
+        SizedBox(
+          width: SourceRail.width,
+          child: SourceRail(
+            controller: controller,
+            topInset: topInset,
+            onSeek: controller.controlsEnabled ? controller.seek : null,
+            transport: _Transport(controller: controller, compact: false),
+            tabs: _Tabs(controller: controller),
+            panel: _PanelBody(controller: controller),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// 「アーティスト / アルバム」。どちらか欠けたら残ったほうだけ、両方無ければ null。
+String? _metaLine(QobuzTrack? track) {
+  if (track == null) return null;
+  final parts = [
+    track.artist ?? '',
+    track.albumTitle ?? '',
+  ].where((v) => v.trim().isNotEmpty).toList();
+  return parts.isEmpty ? null : parts.join(' / ');
+}
+
+/// アートワーク・曲名・シークバー・トランスポート（iPhone）。
+class _NowPlaying extends StatelessWidget {
+  const _NowPlaying({
+    required this.controller,
+    required this.topInset,
+    required this.menu,
+  });
+
+  final QobuzController controller;
+  final double topInset;
+  final Widget? menu;
+
+  @override
+  Widget build(BuildContext context) {
+    final track = controller.currentTrack;
+    return PhoneNowPlaying(
+      controller: controller,
+      topInset: topInset,
+      statusLabel: _statusLabel(controller),
+      artworkUrl: track?.imageUrl,
+      title: track?.displayTitle ?? '再生していません',
+      subtitle: track?.artist ?? '',
+      header: _HeaderRow(controller: controller, menu: menu),
+      belowSubtitle: track?.qualityLabel == null
+          ? null
+          : _QualityBadge(track: track!),
+      // **Qobuz は頭出しできる。** WiiM に直接投げているので、Spotify Connect
+      // のように機器がシークを拒むことがない。
+      onSeek: controller.controlsEnabled ? controller.seek : null,
+      transport: _Transport(controller: controller, compact: true),
+    );
+  }
+}
+
+/// アートワークの上の 1 行。music の `PlayerController.statusLabel` と同じ役。
+String _statusLabel(QobuzController controller) => switch (controller.status) {
+  QobuzStatus.connected =>
+    controller.isPlaying ? 'PLAYING ON WIIM' : 'PAUSED ON WIIM',
+  QobuzStatus.connecting => 'CONNECTING',
+  QobuzStatus.offline => 'WIIM OFFLINE',
+  _ => 'NOT CONNECTED',
+};
+
+/// 閉じているときの 1 行プレビュー。music の `_SheetPeek` と同じ体裁。
+class _SheetPeek extends StatelessWidget {
+  const _SheetPeek({required this.controller});
+
+  final QobuzController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final next = controller.nextTrack;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: controller.toggleSheet,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 2, 20, 20),
+        child: Row(
+          children: [
+            Artwork(
+              url: next?.imageUrl,
+              size: 46,
+              radius: const BorderRadius.all(Radius.circular(5)),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CapsLabel(
+                    'Next up',
+                    size: 10,
+                    color: controller.palette.accent,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    next?.displayTitle ?? 'キューは空です',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppText.body(16, weight: FontWeight.w900),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              '+${controller.upNext.length}',
+              style: AppText.body(12, color: AppColors.white(0.4)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 開いたときの中身（タブ + パネル）。music の `_SheetBody` と同じ余白。
+class _SheetBody extends StatelessWidget {
+  const _SheetBody({required this.controller});
+
+  final QobuzController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(18, 2, 18, 12),
+          child: _Tabs(controller: controller),
+        ),
+        Expanded(
+          child: Padding(
+            // ボトムシートは画面下端に接するので、ホームインジケータぶんを足す。
+            padding: EdgeInsets.fromLTRB(
+              18,
+              0,
+              18,
+              18 + MediaQuery.paddingOf(context).bottom,
+            ),
+            child: _PanelBody(controller: controller),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// キュー / ライブラリ / 検索。**見た目は music の `RailTabs` と同じ部品。**
+class _Tabs extends StatelessWidget {
+  const _Tabs({required this.controller});
+
+  final QobuzController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final upNext = controller.upNext.length;
+    return SegmentedTabs(
+      tabs: [
+        TabButton(
+          label: upNext == 0 ? 'Up next' : 'Up next ($upNext)',
+          active: controller.tab == QobuzTab.queue,
+          onTap: () => controller.selectTab(QobuzTab.queue),
+        ),
+        TabButton(
+          label: 'Library',
+          active: controller.tab == QobuzTab.library,
+          onTap: () => controller.selectTab(QobuzTab.library),
+        ),
+        TabButton(
+          label: 'Search',
+          active: controller.tab == QobuzTab.search,
+          onTap: () => controller.selectTab(QobuzTab.search),
+        ),
+      ],
+    );
+  }
+}
+
+class _PanelBody extends StatelessWidget {
+  const _PanelBody({required this.controller});
+
+  final QobuzController controller;
+
+  @override
+  Widget build(BuildContext context) => switch (controller.tab) {
+    QobuzTab.queue => _QueueList(controller: controller),
+    QobuzTab.library => _LibraryPanel(controller: controller),
+    QobuzTab.search => _SearchPanel(controller: controller),
+  };
+}
+
+/// ☰ / モード名 / WiiM のピル（タップで音量）。
+/// ☰ / WiiM のピル（タップで音量）/ 音源名。
+///
+/// **並びは music の見出しの行と同じ。** 左に ☰、その隣に出力先のピル、
+/// 右端に音源名（music 側は SPOTIFY CONNECT）。壁掛けで人が入れ替わりながら
+/// 触るので、いま何を操作しているかは常に同じ位置に出す。
+class _HeaderRow extends StatelessWidget {
+  const _HeaderRow({required this.controller, this.menu});
+
+  final QobuzController controller;
+  final Widget? menu;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
         children: [
-          if (onOpenMenu != null) MenuButton(onPressed: onOpenMenu!),
-          const SizedBox(width: 2),
-          const CapsLabel('HI-RES'),
-          const Spacer(),
-          GlassPill(
+          if (menu != null) ...[menu!, const SizedBox(width: MenuButton.gap)],
+          Flexible(
+            child: GlassPill(
             // **出力先は 1 台しかない**（IP を手で入れた WiiM）ので、
             // ここは切り替えではなく音量を出す口にしている。
             onTap: controller.status == QobuzStatus.connected
@@ -114,13 +405,19 @@ class _Header extends StatelessWidget {
                   pulse: controller.isPlaying,
                 ),
                 const SizedBox(width: 8),
-                CapCentered(
-                  fontSize: 13,
-                  child: Text(
-                    controller.status == QobuzStatus.connected
-                        ? controller.deviceName
-                        : _statusText(controller.status),
-                    style: AppText.body(13, color: AppColors.white(0.8)),
+                // **名前が長いと溢れる。** 狭い端末では省略に倒す
+                // （music のデバイスピルと同じ扱い）。
+                Flexible(
+                  child: CapCentered(
+                    fontSize: 13,
+                    child: Text(
+                      controller.status == QobuzStatus.connected
+                          ? controller.deviceName
+                          : _statusText(controller.status),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppText.body(13, color: AppColors.white(0.8)),
+                    ),
                   ),
                 ),
                 if (controller.status == QobuzStatus.connected) ...[
@@ -144,8 +441,10 @@ class _Header extends StatelessWidget {
               ],
             ),
           ),
+          ),
+          const Spacer(),
+          const CapsLabel('QOBUZ'),
         ],
-      ),
     );
   }
 
@@ -219,20 +518,23 @@ class _Header extends StatelessWidget {
   );
 }
 
+/// 画面の一番上に出る帯。
+///
+/// **自前でステータスバーぶんまで塗る**（music の停止バナーと同型）。
+/// 帯が出ている間はそのぶん中身を下げるので、高さは [_bannerHeight] と
+/// 揃えること。
 class _ErrorBanner extends StatelessWidget {
-  const _ErrorBanner({required this.controller});
+  const _ErrorBanner({required this.controller, required this.topPad});
 
   final QobuzController controller;
+  final double topPad;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(
-        color: AppColors.danger.withValues(alpha: 0.14),
-        borderRadius: AppRadius.row,
-      ),
+      padding: EdgeInsets.fromLTRB(16, topPad + 6, 8, 6),
+      height: topPad + _bannerHeight,
+      color: AppColors.danger.withValues(alpha: 0.18),
       child: Row(
         children: [
           const Icon(Icons.error_outline, color: AppColors.danger, size: 16),
@@ -262,61 +564,11 @@ class _ErrorBanner extends StatelessWidget {
 }
 
 /// アートワーク・曲名・シークバー・トランスポート。
-class _NowPlaying extends StatelessWidget {
-  const _NowPlaying({required this.controller, required this.compact});
-
-  final QobuzController controller;
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) {
-    final track = controller.currentTrack;
-    final art = compact ? 148.0 : 260.0;
-
-    return Padding(
-      padding: EdgeInsets.symmetric(
-        horizontal: 24,
-        vertical: compact ? 12 : 24,
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Artwork(url: track?.imageUrl, size: art),
-          SizedBox(height: compact ? 16 : 24),
-          SizedBox(
-            width: double.infinity,
-            child: MarqueeText(
-              track?.displayTitle ?? '停止中',
-              style: AppText.body(
-                compact ? 19 : 24,
-                weight: FontWeight.w900,
-                color: Colors.white,
-              ),
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            track?.artist ?? '—',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: AppText.body(14, color: AppColors.white(0.55)),
-          ),
-          // **ハイレゾかどうかはここでしか分からない。** WiiM の画面を見に
-          // 行かずに済むよう、bit/kHz を曲名の下に出す（§3 の落とし穴 6）。
-          if (track?.qualityLabel != null) ...[
-            const SizedBox(height: 10),
-            _QualityBadge(track: track!),
-          ],
-          SizedBox(height: compact ? 16 : 24),
-          _Progress(controller: controller),
-          SizedBox(height: compact ? 12 : 18),
-          _Transport(controller: controller, compact: compact),
-        ],
-      ),
-    );
-  }
-}
-
+///
+/// **並びも寸法も music（`PhoneLayout._NowPlaying`）に合わせてある。**
+/// 音源が変わっても手が同じ場所を探せるように、アートワークの演出
+/// （[SwipeSkip] / [OrbitingLight]）とシークバー・トランスポートは
+/// music と同じ部品を使う。Qobuz にしか無いのは音質バッジだけ。
 class _QualityBadge extends StatelessWidget {
   const _QualityBadge({required this.track});
 
@@ -352,74 +604,11 @@ class _QualityBadge extends StatelessWidget {
   }
 }
 
-/// シークバー。**ここだけ毎秒描き直す**（`QobuzController.progressTick`）。
-class _Progress extends StatelessWidget {
-  const _Progress({required this.controller});
-
-  final QobuzController controller;
-
-  static const _barHeight = 6.0;
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: controller.progressTick,
-      builder: (context, _) {
-        final position = controller.position;
-        final duration = controller.duration;
-        final fraction = controller.progressFraction;
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            LayoutBuilder(
-              builder: (context, constraints) {
-                return GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTapDown: duration == Duration.zero
-                      ? null
-                      : (details) {
-                          final ratio =
-                              (details.localPosition.dx / constraints.maxWidth)
-                                  .clamp(0.0, 1.0);
-                          controller.seek(duration * ratio);
-                        },
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(99),
-                    child: SizedBox(
-                      height: _barHeight,
-                      child: LinearProgressIndicator(
-                        value: fraction,
-                        backgroundColor: AppColors.white(0.10),
-                        valueColor: const AlwaysStoppedAnimation(Colors.white),
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
-            const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  formatDuration(position),
-                  style: AppText.grotesk(size: 13, color: AppColors.white(0.5)),
-                ),
-                Text(
-                  duration == Duration.zero
-                      ? '--:--'
-                      : '-${formatDuration(duration - position)}',
-                  style: AppText.grotesk(size: 13, color: AppColors.white(0.5)),
-                ),
-              ],
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
+/// シャッフル / ◀◀・再生・▶▶ / リピート。
+///
+/// **真ん中の 3 つは music と同じ部品**（[TransportControls]）。寸法も見た目も
+/// あちらに揃うので、音源を切り替えても押す場所が変わらない。左右のシャッフルと
+/// リピートは Qobuz 側にしか無い（キューを持っているのがこのアプリだから）。
 class _Transport extends StatelessWidget {
   const _Transport({required this.controller, required this.compact});
 
@@ -428,10 +617,7 @@ class _Transport extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // 接続していてキューに曲がある間だけ押せる。
-    final enabled =
-        controller.status == QobuzStatus.connected &&
-        controller.currentItem != null;
+    final enabled = controller.controlsEnabled;
     final repeat = controller.repeatMode;
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -445,29 +631,7 @@ class _Transport extends StatelessWidget {
           semanticLabel: 'シャッフル',
         ),
         SizedBox(width: compact ? 14 : 20),
-        _RoundButton(
-          icon: Icons.skip_previous_rounded,
-          size: compact ? kMinTapTarget : 48,
-          onTap: enabled ? controller.skipPrevious : null,
-          semanticLabel: '前の曲',
-        ),
-        SizedBox(width: compact ? 18 : 22),
-        _RoundButton(
-          icon: controller.isPlaying
-              ? Icons.pause_rounded
-              : Icons.play_arrow_rounded,
-          size: compact ? 64 : 72,
-          filled: true,
-          onTap: enabled ? controller.togglePlayPause : null,
-          semanticLabel: controller.isPlaying ? '一時停止' : '再生',
-        ),
-        SizedBox(width: compact ? 18 : 22),
-        _RoundButton(
-          icon: Icons.skip_next_rounded,
-          size: compact ? kMinTapTarget : 48,
-          onTap: enabled ? controller.skipNext : null,
-          semanticLabel: '次の曲',
-        ),
+        TransportControls(controller: controller, compact: compact),
         SizedBox(width: compact ? 14 : 20),
         _IconToggle(
           icon: repeat == QobuzRepeatMode.one
@@ -478,51 +642,6 @@ class _Transport extends StatelessWidget {
           semanticLabel: 'リピート',
         ),
       ],
-    );
-  }
-}
-
-class _RoundButton extends StatelessWidget {
-  const _RoundButton({
-    required this.icon,
-    required this.size,
-    required this.onTap,
-    required this.semanticLabel,
-    this.filled = false,
-  });
-
-  final IconData icon;
-  final double size;
-  final VoidCallback? onTap;
-  final String semanticLabel;
-  final bool filled;
-
-  @override
-  Widget build(BuildContext context) {
-    final disabled = onTap == null;
-    return Semantics(
-      button: true,
-      label: semanticLabel,
-      child: Material(
-        color: filled
-            ? (disabled ? AppColors.white(0.25) : Colors.white)
-            : Colors.transparent,
-        shape: const CircleBorder(),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: SizedBox.square(
-            dimension: size,
-            child: Icon(
-              icon,
-              size: size * 0.52,
-              color: filled
-                  ? AppColors.onWhite
-                  : AppColors.white(disabled ? 0.25 : 0.85),
-            ),
-          ),
-        ),
-      ),
     );
   }
 }
@@ -555,99 +674,6 @@ class _IconToggle extends StatelessWidget {
 }
 
 /// キュー / ライブラリ / 検索。
-class _Panel extends StatelessWidget {
-  const _Panel({required this.controller});
-
-  final QobuzController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
-          child: Row(
-            children: [
-              _TabButton(
-                label: 'キュー',
-                count: controller.upNext.length,
-                selected: controller.tab == QobuzTab.queue,
-                onTap: () => controller.selectTab(QobuzTab.queue),
-              ),
-              const SizedBox(width: 8),
-              _TabButton(
-                label: 'ライブラリ',
-                selected: controller.tab == QobuzTab.library,
-                onTap: () => controller.selectTab(QobuzTab.library),
-              ),
-              const SizedBox(width: 8),
-              _TabButton(
-                label: '検索',
-                selected: controller.tab == QobuzTab.search,
-                onTap: () => controller.selectTab(QobuzTab.search),
-              ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: switch (controller.tab) {
-            QobuzTab.queue => _QueueList(controller: controller),
-            QobuzTab.library => _LibraryPanel(controller: controller),
-            QobuzTab.search => _SearchPanel(controller: controller),
-          },
-        ),
-        if (controller.toast != null) _Toast(controller: controller),
-      ],
-    );
-  }
-}
-
-class _TabButton extends StatelessWidget {
-  const _TabButton({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-    this.count,
-  });
-
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-  final int? count;
-
-  @override
-  Widget build(BuildContext context) {
-    return HoverRow(
-      onTap: onTap,
-      radius: AppRadius.pill,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          CapsLabel(
-            label,
-            size: 11,
-            color: selected ? Colors.white : AppColors.white(0.4),
-          ),
-          if (count != null && count! > 0) ...[
-            const SizedBox(width: 8),
-            Text(
-              '$count',
-              style: AppText.grotesk(
-                size: 11,
-                color: AppColors.white(selected ? 0.6 : 0.3),
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-/// これから鳴る曲。**並べ替えられる**——キューはこのアプリが持っているので、
-/// WiiM 側の都合を気にせず入れ替えられる。
 class _QueueList extends StatelessWidget {
   const _QueueList({required this.controller});
 
@@ -1146,38 +1172,6 @@ class _Empty extends StatelessWidget {
           text,
           textAlign: TextAlign.center,
           style: AppText.body(13, color: AppColors.white(0.35), height: 1.7),
-        ),
-      ),
-    );
-  }
-}
-
-class _Toast extends StatelessWidget {
-  const _Toast({required this.controller});
-
-  final QobuzController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
-      child: HoverRow(
-        onTap: controller.dismissToast,
-        radius: AppRadius.pill,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
-        child: Row(
-          children: [
-            const Icon(Icons.check, size: 15, color: AppColors.green),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                controller.toast!,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: AppText.body(13, color: AppColors.white(0.8)),
-              ),
-            ),
-          ],
         ),
       ),
     );

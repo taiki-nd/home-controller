@@ -146,11 +146,20 @@ class FakeWiimApi extends WiimApi {
 
   WiimStatus current = idleStatus();
 
-  @override
-  Future<WiimDevice> device() async => const WiimDevice(name: 'リビング');
+  /// WiiM に届かない状態。**接続が落ちたときの画面**を作るのに使う。
+  bool failing = false;
 
   @override
-  Future<WiimStatus> status({DateTime? now}) async => current;
+  Future<WiimDevice> device() async {
+    if (failing) throw WiimException('WiiM に接続できません');
+    return const WiimDevice(name: 'リビング');
+  }
+
+  @override
+  Future<WiimStatus> status({DateTime? now}) async {
+    if (failing) throw WiimException('WiiM に接続できません');
+    return current;
+  }
 
   @override
   Future<void> play(String url, {WiimUrlEncoding? encoding}) async {

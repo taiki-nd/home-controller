@@ -1,14 +1,17 @@
 import 'dart:async';
-import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
-import 'package:palette_generator/palette_generator.dart';
 
 import '../models/spotify_models.dart';
 import '../services/device_name_cache.dart';
 import '../services/spotify_api.dart';
 import '../theme/tokens.dart';
+import 'playback_surface.dart';
+
+// 再生画面まわりは `ArtworkPalette` を `PlayerController` 経由で取っているので、
+// 移した先をここから出し直す（呼ぶ側の import を触らずに済ませる）。
+export 'playback_surface.dart' show ArtworkPalette, PlaybackSurface;
 
 /// 右レール / ボトムシートのタブ。
 ///
@@ -16,22 +19,11 @@ import '../theme/tokens.dart';
 /// したら、あちらの labels も同じ順で直すこと。
 enum RailTab { queue, search, playlists, newReleases }
 
-/// アートワークから抜いた 2 色。背景グラデーションにだけ使う。
-/// （Spotify デザインガイドライン上、アートワーク自体の加工はできない — 設計メモ §12）
-class ArtworkPalette {
-  const ArtworkPalette(this.deep, this.accent);
-
-  static const fallback = ArtworkPalette(Color(0xFF1D1D24), Color(0xFF4A4A5C));
-
-  final Color deep;
-  final Color accent;
-}
-
 /// アプリの唯一のコントローラ。
 ///
 /// **ローカルにキュー状態を持たない**（設計メモ §1）。ここにあるのは全て
 /// 「直近に Spotify から取ってきたものの写し」と、UI の一時状態だけ。
-class PlayerController extends ChangeNotifier {
+class PlayerController extends ChangeNotifier implements PlaybackSurface {
   /// [now] はテスト用。ポーリングの間隔は「曲の残り時間」から決まるので、
   /// 時計を差し替えられないと fake_async でスケジュールを検証できない
   /// （fake_async が進めるのはタイマーだけで [DateTime.now] は実時刻のまま）。
@@ -83,8 +75,7 @@ class PlayerController extends ChangeNotifier {
   int _searchGeneration = 0;
   Timer? _searchDebounce;
 
-  ArtworkPalette _palette = ArtworkPalette.fallback;
-  String? _paletteSourceUrl;
+  final ArtworkPaletteResolver _paletteResolver = ArtworkPaletteResolver();
 
   bool _foreground = true;
   bool _disposed = false;
@@ -113,6 +104,7 @@ class PlayerController extends ChangeNotifier {
 
   /// 進捗バーだけを 500ms で塗り替えるための別 Listenable。
   /// 全体を notifyListeners すると 2Hz で全再ビルドになるので分けている。
+  @override
   final ChangeNotifier progressTick = ChangeNotifier();
   Timer? _tickTimer;
 
@@ -135,6 +127,10 @@ class PlayerController extends ChangeNotifier {
   bool get sheetOpen => _sheetOpen;
   bool get devicesOpen => _devicesOpen && !_deviceLost;
   bool get deviceLost => _deviceLost;
+
+  /// [PlaybackSurface] 側の呼び名。**機器を見失っていたら押させない。**
+  @override
+  bool get controlsEnabled => !_deviceLost;
   String? get toast => _toast;
   String? get errorBanner => _errorBanner;
 
@@ -143,11 +139,14 @@ class PlayerController extends ChangeNotifier {
   bool get searchBusy => _searchBusy;
   bool get searchHasMore => _searchHasMore;
 
-  ArtworkPalette get palette => _palette;
+  @override
+  ArtworkPalette get palette => _paletteResolver.palette;
 
   /// 204 NO CONTENT。「停止中」であってエラーではない（設計メモ §5）。
+  @override
   bool get isStopped => !_playback.hasContent || _playback.track == null;
 
+  @override
   bool get isPlaying => _playback.isPlaying && !isStopped;
   bool get shuffleOn => _playback.shuffleState;
 
@@ -203,6 +202,7 @@ class PlayerController extends ChangeNotifier {
 
   /// 進捗は毎回 API を叩かず、取得した progress_ms を起点にローカル内挿する
   /// （設計メモ §8）。
+  @override
   Duration get position {
     final base = Duration(milliseconds: _playback.progressMs);
     if (!isPlaying) return base;
@@ -212,9 +212,11 @@ class PlayerController extends ChangeNotifier {
     return total > duration ? duration : total;
   }
 
+  @override
   Duration get duration =>
       Duration(milliseconds: currentTrack?.durationMs ?? 0);
 
+  @override
   double get progressFraction {
     final total = duration.inMilliseconds;
     if (total <= 0 || isStopped) return 0;
@@ -566,6 +568,7 @@ class PlayerController extends ChangeNotifier {
 
   // ── 再生操作 ─────────────────────────────────────────────────────────
 
+  @override
   Future<void> togglePlayPause() async {
     if (_deviceLost) {
       showToast('デバイスが見つかりません');
@@ -594,6 +597,7 @@ class PlayerController extends ChangeNotifier {
         wasPlaying ? _api.pause() : _api.resume(deviceId: _targetDeviceId));
   }
 
+  @override
   Future<void> skipNext() async {
     if (_deviceLost) return;
     // キューの先頭が分かっているなら、返事を待たずにそこへ進めてしまう。
@@ -612,6 +616,7 @@ class PlayerController extends ChangeNotifier {
     await _afterCommand();
   }
 
+  @override
   Future<void> skipPrevious() async {
     if (_deviceLost) return;
     // 履歴があるときだけ先に戻す。無ければ従来どおり結果を待つ。
@@ -1030,39 +1035,8 @@ class PlayerController extends ChangeNotifier {
   // ── 配色抽出 ─────────────────────────────────────────────────────────
 
   Future<void> _updatePalette(Track? track) async {
-    final url = track?.artworkUrl;
-    if (url == null || url == _paletteSourceUrl) return;
-    _paletteSourceUrl = url;
-    try {
-      final generated = await PaletteGenerator.fromImageProvider(
-        NetworkImage(url),
-        size: const ui.Size(120, 120),
-        maximumColorCount: 12,
-      );
-      if (_disposed || _paletteSourceUrl != url) return;
-      final accent =
-          generated.vibrantColor?.color ??
-          generated.lightVibrantColor?.color ??
-          generated.dominantColor?.color ??
-          ArtworkPalette.fallback.accent;
-      final deep =
-          generated.darkMutedColor?.color ??
-          generated.darkVibrantColor?.color ??
-          _darken(accent);
-      _palette = ArtworkPalette(deep, accent);
-      notifyListeners();
-    } catch (e) {
-      // 画像が取れないだけなので既定色で続行する。
-      debugPrint('palette extraction failed: $e');
-    }
-  }
-
-  Color _darken(Color color) {
-    final hsl = HSLColor.fromColor(color);
-    return hsl
-        .withLightness((hsl.lightness * 0.35).clamp(0.0, 1.0))
-        .withSaturation((hsl.saturation * 0.8).clamp(0.0, 1.0))
-        .toColor();
+    final changed = await _paletteResolver.resolve(track?.artworkUrl);
+    if (changed && !_disposed) notifyListeners();
   }
 }
 

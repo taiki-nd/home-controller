@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:spotify_remote/state/playback_surface.dart';
 import 'package:spotify_remote/state/qobuz_controller.dart';
 
 import 'qobuz_support.dart';
@@ -7,6 +8,46 @@ import 'qobuz_support.dart';
 /// WiiM 側に「キューに追加」が無いぶん、次に再生・末尾に追加・並べ替え・
 /// 曲送りの正しさはここでしか担保できない。
 void main() {
+  group('再生画面から見た口（PlaybackSurface）', () {
+    // **music と同じ部品（ProgressRow / TransportControls）を使う前提。**
+    // ここが崩れると、Qobuz 側だけ操作が効かない・時間が出ない、という
+    // 画面を見ないと分からない壊れ方をする。
+    test('QobuzController は PlaybackSurface として渡せる', () async {
+      final (controller, _, _) = await started();
+      addTearDown(controller.dispose);
+
+      expect(controller, isA<PlaybackSurface>());
+    });
+
+    test('繋がっていても、鳴らすものが無ければ押させない', () async {
+      final (controller, _, _) = await started();
+      addTearDown(controller.dispose);
+
+      expect(controller.status, QobuzStatus.connected);
+      expect(controller.currentItem, isNull);
+      // 送る先が無いので押させない。**接続だけでは足りない。**
+      expect(controller.controlsEnabled, isFalse);
+      expect(controller.isStopped, isTrue);
+
+      await controller.enqueueTracks([track(1)]);
+
+      expect(controller.controlsEnabled, isTrue);
+      expect(controller.isStopped, isFalse);
+    });
+
+    test('繋がっていなければ、キューがあっても押させない', () async {
+      final (controller, _, wiim) = await started();
+      addTearDown(controller.dispose);
+      await controller.enqueueTracks([track(1)]);
+
+      wiim.failing = true;
+      await controller.retry();
+
+      expect(controller.status, isNot(QobuzStatus.connected));
+      expect(controller.controlsEnabled, isFalse);
+    });
+  });
+
   test('繋がったら WiiM の名前と状態が入る', () async {
     final (controller, _, _) = await started();
     addTearDown(controller.dispose);

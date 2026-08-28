@@ -1,5 +1,3 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 
 import '../models/release_models.dart';
@@ -8,12 +6,10 @@ import '../state/new_releases_controller.dart';
 import '../state/player_controller.dart';
 import '../theme/tokens.dart';
 import 'widgets/atoms.dart';
-import 'widgets/marquee_text.dart';
 import 'widgets/new_releases_panel.dart';
-import 'widgets/orbiting_light.dart';
 import 'widgets/panels.dart';
 import 'widgets/playlist_button.dart';
-import 'widgets/swipe_skip.dart';
+import 'widgets/source_layout.dart';
 import 'widgets/transport.dart';
 
 /// スマホ（デザインは 390x844）。
@@ -58,48 +54,30 @@ class PhoneLayout extends StatelessWidget {
   static double devicePillDotXFor({required bool hasMenu}) =>
       hasMenu ? devicePillDotX + MenuButton.shift : devicePillDotX;
 
-  static const _sheetClosedHeight = 116.0;
-
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        // 割合はステータスバーを除いた「中身が使える高さ」に掛ける。
-        // 全高に掛けると、上に隠れている帯のぶんシートが伸びる。
-        final sheetHeight = controller.sheetOpen
-            ? (constraints.maxHeight - topInset) * 0.78
-            : _sheetClosedHeight;
-
-        return Stack(
-          children: [
-            Positioned.fill(
-              bottom: _sheetClosedHeight,
-              child: _NowPlaying(
-                controller: controller,
-                attribution: attribution,
-                menu: menu,
-                topInset: topInset,
-                onRemoveFromPlaylist: onRemoveFromPlaylist,
-              ),
-            ),
-            AnimatedPositioned(
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeOutCubic,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              height: sheetHeight,
-              child: _Sheet(
-                controller: controller,
-                newReleases: newReleases,
-                onPlayNow: onPlayNow,
-                onPlayPlaylist: onPlayPlaylist,
-                onPlayRelease: onPlayRelease,
-              ),
-            ),
-          ],
-        );
-      },
+    return PhoneSourceScaffold(
+      topInset: topInset,
+      sheetOpen: controller.sheetOpen,
+      nowPlaying: _NowPlaying(
+        controller: controller,
+        attribution: attribution,
+        menu: menu,
+        topInset: topInset,
+        onRemoveFromPlaylist: onRemoveFromPlaylist,
+      ),
+      sheet: SourceSheet(
+        open: controller.sheetOpen,
+        onToggle: controller.toggleSheet,
+        peek: _SheetPeek(controller: controller),
+        body: _SheetBody(
+          controller: controller,
+          newReleases: newReleases,
+          onPlayNow: onPlayNow,
+          onPlayPlaylist: onPlayPlaylist,
+          onPlayRelease: onPlayRelease,
+        ),
+      ),
     );
   }
 }
@@ -122,112 +100,30 @@ class _NowPlaying extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final track = controller.currentTrack;
-    final stopped = controller.isStopped;
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        // デザインは 342px（停止中 250px）。小さい端末では縮める。
-        final artSize = (stopped ? 250.0 : 342.0).clamp(
-          140.0,
-          (constraints.maxWidth - 48).clamp(140.0, 342.0),
-        );
-
-        return SingleChildScrollView(
-          padding: EdgeInsets.fromLTRB(24, topInset + 16, 24, 16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                children: [
-                  if (menu != null) ...[
-                    menu!,
-                    const SizedBox(width: MenuButton.gap),
-                  ],
-                  Flexible(child: _DevicePill(controller: controller)),
-                  const Spacer(),
-                  attribution,
-                ],
-              ),
-              const SizedBox(height: 12),
-              Text(
-                controller.statusLabel,
-                style: AppText.grotesk(
-                  size: 11,
-                  color: AppColors.white(0.4),
-                  letterSpacing: 1.1,
-                ),
-              ),
-              const SizedBox(height: 22),
-              Center(
-                child: SwipeSkip(
-                  size: artSize.toDouble(),
-                  enabled: !controller.deviceLost,
-                  onNext: controller.skipNext,
-                  onPrevious: controller.skipPrevious,
-                  child: OrbitingLight(
-                    size: artSize.toDouble(),
-                    active: controller.isPlaying,
-                    tint: Color.lerp(
-                      controller.palette.accent,
-                      Colors.white,
-                      0.45,
-                    )!,
-                    child: Artwork(
-                      url: track?.artworkUrl,
-                      size: artSize.toDouble(),
-                      opacity: stopped ? 0.4 : 1.0,
-                      placeholderColors: [
-                        controller.palette.deep,
-                        controller.palette.accent,
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 24),
-              // 曲名の右にプレイリストのボタン。行は増やさない。
-              // 停止中はボタン自体が消える（幅は曲名が使う）。
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Expanded(
-                    child: MarqueeText(
-                      track?.name ?? '再生していません',
-                      style: AppText.body(
-                        30,
-                        weight: FontWeight.w900,
-                        height: 1.08,
-                        letterSpacing: -0.6,
-                      ),
-                    ),
-                  ),
-                  if (track != null) ...[
-                    const SizedBox(width: 12),
-                    PlaylistToggleButton(
-                      controller: controller,
-                      compact: true,
-                      onRemove: onRemoveFromPlaylist,
-                    ),
-                  ],
-                ],
-              ),
-              const SizedBox(height: 6),
-              MarqueeText(
-                track?.artists ?? '',
-                style: AppText.body(
-                  18,
-                  weight: FontWeight.w700,
-                  color: AppColors.white(0.68),
-                ),
-              ),
-              const SizedBox(height: 20),
-              ProgressRow(controller: controller, barHeight: 5, labelSize: 12),
-              const SizedBox(height: 18),
-              TransportControls(controller: controller, compact: true),
-            ],
-          ),
-        );
-      },
+    return PhoneNowPlaying(
+      controller: controller,
+      topInset: topInset,
+      statusLabel: controller.statusLabel,
+      artworkUrl: track?.artworkUrl,
+      title: track?.name ?? '再生していません',
+      subtitle: track?.artists ?? '',
+      header: Row(
+        children: [
+          if (menu != null) ...[menu!, const SizedBox(width: MenuButton.gap)],
+          Flexible(child: _DevicePill(controller: controller)),
+          const Spacer(),
+          attribution,
+        ],
+      ),
+      // 停止中はボタン自体が消える（幅は曲名が使う）。
+      titleTrailing: track == null
+          ? null
+          : PlaylistToggleButton(
+              controller: controller,
+              compact: true,
+              onRemove: onRemoveFromPlaylist,
+            ),
+      transport: TransportControls(controller: controller, compact: true),
     );
   }
 }
@@ -263,94 +159,6 @@ class _DevicePill extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-/// シートの中身（タブ + パネル）が縮まずに入る最小の高さ。
-/// タブの段 58 + パネルの見出し 44 + 余白 で、リストが 0 行でも溢れない値。
-const _minBodyHeight = 150.0;
-
-class _Sheet extends StatelessWidget {
-  const _Sheet({
-    required this.controller,
-    required this.newReleases,
-    required this.onPlayNow,
-    required this.onPlayPlaylist,
-    required this.onPlayRelease,
-  });
-
-  final PlayerController controller;
-  final NewReleasesController newReleases;
-  final ValueChanged<Track> onPlayNow;
-  final ValueChanged<PlaylistSummary> onPlayPlaylist;
-  final ValueChanged<NewRelease> onPlayRelease;
-
-  @override
-  Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: const Color(0xFF0C0C0E).withValues(alpha: 0.94),
-            border: Border(top: BorderSide(color: AppColors.white(0.12))),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // グラブハンドル。上下スワイプでも開閉できるようにしておく。
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: controller.toggleSheet,
-                onVerticalDragEnd: (details) {
-                  final velocity = details.primaryVelocity ?? 0;
-                  if (velocity < -120 && !controller.sheetOpen) {
-                    controller.toggleSheet();
-                  } else if (velocity > 120 && controller.sheetOpen) {
-                    controller.toggleSheet();
-                  }
-                },
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 10, 20, 8),
-                  child: Center(
-                    child: Container(
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(99),
-                        color: AppColors.white(0.28),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              Expanded(
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    // **開いた瞬間はまだシートが伸びていない。** sheetOpen は即座に
-                    // 反転するが、高さを動かすのは AnimatedPositioned なので、
-                    // 最初の 1 フレームは閉じたときの高さで組まれる。そこに本体を
-                    // 入れると Column が溢れて赤縞が出るので、収まる高さになるまで
-                    // 1 行プレビューのままにしておく。
-                    final fits = constraints.maxHeight >= _minBodyHeight;
-                    return controller.sheetOpen && fits
-                        ? _SheetBody(
-                            controller: controller,
-                            newReleases: newReleases,
-                            onPlayNow: onPlayNow,
-                            onPlayPlaylist: onPlayPlaylist,
-                            onPlayRelease: onPlayRelease,
-                          )
-                        : _SheetPeek(controller: controller);
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }

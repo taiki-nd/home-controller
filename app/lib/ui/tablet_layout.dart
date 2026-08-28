@@ -1,5 +1,3 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 
 import '../models/release_models.dart';
@@ -8,13 +6,10 @@ import '../state/new_releases_controller.dart';
 import '../state/player_controller.dart';
 import '../theme/tokens.dart';
 import 'widgets/atoms.dart';
-import 'widgets/marquee_text.dart';
 import 'widgets/new_releases_panel.dart';
-import 'widgets/orbiting_light.dart';
 import 'widgets/panels.dart';
 import 'widgets/playlist_button.dart';
-import 'widgets/soft_surface.dart';
-import 'widgets/swipe_skip.dart';
+import 'widgets/source_layout.dart';
 import 'widgets/transport.dart';
 
 /// iPad 横（デザインは 1194x834）。
@@ -77,7 +72,7 @@ class TabletLayout extends StatelessWidget {
           ),
         ),
         SizedBox(
-          width: 452,
+          width: SourceRail.width,
           child: _Rail(
             controller: controller,
             newReleases: newReleases,
@@ -110,103 +105,31 @@ class _NowPlayingPane extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final track = controller.currentTrack;
-    final stopped = controller.isStopped;
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        // デザインは 570px（停止中 490px）。狭い iPad でも収まるよう上限を掛ける。
-        // 高さは中身が使える分（= 全高 - topInset）で測る。
-        // 引く 280 は、上のデバイスピル行と下の 2 行ぶんの取り分。
-        // メタ行にはプレイリストのボタン（高さ 44）が入るので、文字だけの
-        // 行より背が高い。ここを詰めると狭い iPad で Column が溢れる。
-        final artSize = (stopped ? 490.0 : 570.0).clamp(
-          200.0,
-          (constraints.maxHeight - topInset - 280).clamp(200.0, 600.0),
-        );
-
-        return Padding(
-          padding: EdgeInsets.fromLTRB(40, topInset + 34, 30, 30),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                children: [
-                  if (menu != null) ...[
-                    menu!,
-                    const SizedBox(width: MenuButton.gap),
-                  ],
-                  _DevicePill(controller: controller),
-                  const Spacer(),
-                  attribution,
-                ],
-              ),
-              Expanded(
-                child: Center(
-                  child: SwipeSkip(
-                    size: artSize.toDouble(),
-                    enabled: !controller.deviceLost,
-                    onNext: controller.skipNext,
-                    onPrevious: controller.skipPrevious,
-                    child: OrbitingLight(
-                      size: artSize.toDouble(),
-                      active: controller.isPlaying,
-                      tint: Color.lerp(
-                        controller.palette.accent,
-                        Colors.white,
-                        0.45,
-                      )!,
-                      child: Artwork(
-                        url: track?.artworkUrl,
-                        size: artSize.toDouble(),
-                        opacity: stopped ? 0.4 : 1.0,
-                        placeholderColors: [
-                          controller.palette.deep,
-                          controller.palette.accent,
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 20),
-              // アーティスト / アルバムは「Now playing」と同じ体裁の 1 行。
-              // 曲がないときだけ、そこに状態を出す。
-              // プレイリストのボタンはこの行の右端。行は増やさない。
-              Row(
-                children: [
-                  Expanded(
-                    child: MarqueeText(
-                      _metaLine(track) ??
-                          (stopped ? 'LAST PLAYED' : 'NOW PLAYING'),
-                      style: AppText.caps(12, AppColors.white(0.55)),
-                    ),
-                  ),
-                  if (track != null) ...[
-                    const SizedBox(width: 16),
-                    PlaylistToggleButton(
-                      controller: controller,
-                      compact: false,
-                      onRemove: onRemoveFromPlaylist,
-                    ),
-                  ],
-                ],
-              ),
-              const SizedBox(height: 10),
-              // 2 行ぶんの高さが曲によらず一定になるので、上の Expanded の取り分＝
-              // アートワークの位置も動かない。
-              MarqueeText(
-                track?.name ?? '再生していません',
-                style: AppText.body(
-                  50,
-                  weight: FontWeight.w900,
-                  height: 1.04,
-                  letterSpacing: -1.5,
-                ),
-              ),
-            ],
-          ),
-        );
-      },
+    return TabletNowPlaying(
+      controller: controller,
+      topInset: topInset,
+      artworkUrl: track?.artworkUrl,
+      // アーティスト / アルバムは「Now playing」と同じ体裁の 1 行。
+      // 曲がないときだけ、そこに状態を出す。
+      metaLine:
+          _metaLine(track) ??
+          (controller.isStopped ? 'LAST PLAYED' : 'NOW PLAYING'),
+      title: track?.name ?? '再生していません',
+      header: Row(
+        children: [
+          if (menu != null) ...[menu!, const SizedBox(width: MenuButton.gap)],
+          _DevicePill(controller: controller),
+          const Spacer(),
+          attribution,
+        ],
+      ),
+      metaTrailing: track == null
+          ? null
+          : PlaylistToggleButton(
+              controller: controller,
+              compact: false,
+              onRemove: onRemoveFromPlaylist,
+            ),
     );
   }
 }
@@ -271,75 +194,36 @@ class _Rail extends StatelessWidget {
   final ValueChanged<Track> onPlayNow;
   final ValueChanged<PlaylistSummary> onPlayPlaylist;
   final ValueChanged<NewRelease> onPlayRelease;
-
-  /// 面はここも含めて塗り、進捗バーだけこのぶん下げる。
-  /// ステータスバーの帯をレールの色で塗り分けているのがこれ。
   final double topInset;
 
   @override
   Widget build(BuildContext context) {
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 26, sigmaY: 26),
-        // 左端は線で仕切らず、レールの色そのものを左の面へ繋ぐ。
-        child: SoftSurface(
-          color: AppColors.bg.withValues(alpha: 0.72),
-          edges: const [AxisDirection.left],
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // 進捗＋トランスポートの段。ここも線ではなく、わずかに持ち上げた
-              // 面が下（キュー側）とレールの左へ溶けていく形で仕切る。
-              // 下の余白 15 = 元の 14 + 線 1px ぶん。中身の位置は動かない。
-              SoftSurface(
-                color: AppColors.surface.withValues(alpha: 0.55),
-                edges: const [AxisDirection.down, AxisDirection.left],
-                child: Padding(
-                  padding: EdgeInsets.fromLTRB(24, topInset + 20, 24, 15),
-                  child: Column(
-                    children: [
-                      ProgressRow(controller: controller),
-                      const SizedBox(height: 12),
-                      TransportControls(controller: controller, compact: false),
-                    ],
-                  ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(24, 16, 24, 14),
-                child: RailTabs(
-                  selected: controller.tab,
-                  onSelect: controller.selectTab,
-                ),
-              ),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
-                  child: switch (controller.tab) {
-                    RailTab.queue =>
-                      QueuePanel(controller: controller, compact: false),
-                    RailTab.search => SearchPanel(
-                      controller: controller,
-                      compact: false,
-                      onPlayNow: onPlayNow,
-                    ),
-                    RailTab.playlists => PlaylistsPanel(
-                      controller: controller,
-                      compact: false,
-                      onPlay: onPlayPlaylist,
-                    ),
-                    RailTab.newReleases => NewReleasesPanel(
-                      controller: newReleases,
-                      compact: false,
-                      onPlay: onPlayRelease,
-                    ),
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
+    return SourceRail(
+      controller: controller,
+      topInset: topInset,
+      transport: TransportControls(controller: controller, compact: false),
+      tabs: RailTabs(
+        selected: controller.tab,
+        onSelect: controller.selectTab,
       ),
+      panel: switch (controller.tab) {
+        RailTab.queue => QueuePanel(controller: controller, compact: false),
+        RailTab.search => SearchPanel(
+          controller: controller,
+          compact: false,
+          onPlayNow: onPlayNow,
+        ),
+        RailTab.playlists => PlaylistsPanel(
+          controller: controller,
+          compact: false,
+          onPlay: onPlayPlaylist,
+        ),
+        RailTab.newReleases => NewReleasesPanel(
+          controller: newReleases,
+          compact: false,
+          onPlay: onPlayRelease,
+        ),
+      },
     );
   }
 }

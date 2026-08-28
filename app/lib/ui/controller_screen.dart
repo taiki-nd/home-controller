@@ -8,6 +8,7 @@ import '../state/player_controller.dart';
 import '../theme/tokens.dart';
 import 'phone_layout.dart';
 import 'tablet_layout.dart';
+import 'widgets/artwork_backdrop.dart';
 import 'widgets/atoms.dart';
 import 'widgets/overlays.dart';
 
@@ -104,213 +105,176 @@ class _ControllerScreenState extends State<ControllerScreen>
               : PhoneLayout.devicePillDotXFor(hasMenu: hasMenu),
         );
 
-        // 停止中は配色を落として「鳴っていない」ことを画面全体で示す。
-        final gradient = stopped
-            ? const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [Color(0xFF14140F), AppColors.frameBg],
-                stops: [0, 0.7],
-              )
-            : LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [palette.deep, palette.accent, AppColors.frameBg],
-                stops: const [0, 0.55, 1],
-              );
-
         return Scaffold(
           backgroundColor: AppColors.frameBg,
           body: GestureDetector(
             // ポップオーバーの外側タップで閉じる。
             behavior: HitTestBehavior.translucent,
             onTap: controller.closeDevicePopover,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 500),
-              decoration: BoxDecoration(gradient: gradient),
-              child: DecoratedBox(
-                // アートワーク由来の色が明るいときに文字が沈まないよう暗幕を重ねる。
-                decoration: BoxDecoration(
-                  gradient: wide
-                      ? RadialGradient(
-                          center: Alignment.topLeft,
-                          radius: 1.4,
-                          colors: [
-                            Colors.black.withValues(alpha: 0.15),
-                            Colors.black.withValues(alpha: 0.72),
-                          ],
-                          stops: const [0, 0.75],
-                        )
-                      : LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [
-                            Colors.black.withValues(alpha: 0.25),
-                            Colors.black.withValues(alpha: 0.8),
-                          ],
-                        ),
-                ),
-                child: Stack(
-                  children: [
-                    Positioned.fill(
-                      child: wide
-                          ? TabletLayout(
-                              controller: controller,
-                              newReleases: widget.newReleases,
-                              onPlayNow: _askPlayNow,
-                              onPlayPlaylist: _askPlaylist,
-                              onPlayRelease: _askRelease,
-                              onRemoveFromPlaylist: _askRemoveFromPlaylist,
-                              topInset: contentTop,
-                              attribution: _attributionSlot(controller),
-                              menu: _menuButton(),
-                            )
-                          : PhoneLayout(
-                              controller: controller,
-                              newReleases: widget.newReleases,
-                              onPlayNow: _askPlayNow,
-                              onPlayPlaylist: _askPlaylist,
-                              onPlayRelease: _askRelease,
-                              onRemoveFromPlaylist: _askRemoveFromPlaylist,
-                              topInset: contentTop,
-                              attribution: _attributionSlot(
-                                controller,
-                                compact: true,
-                              ),
-                              menu: _menuButton(compact: true),
+            child: ArtworkBackdrop(
+              palette: palette,
+              stopped: stopped,
+              wide: wide,
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: wide
+                        ? TabletLayout(
+                            controller: controller,
+                            newReleases: widget.newReleases,
+                            onPlayNow: _askPlayNow,
+                            onPlayPlaylist: _askPlaylist,
+                            onPlayRelease: _askRelease,
+                            onRemoveFromPlaylist: _askRemoveFromPlaylist,
+                            topInset: contentTop,
+                            attribution: _attributionSlot(controller),
+                            menu: _menuButton(),
+                          )
+                        : PhoneLayout(
+                            controller: controller,
+                            newReleases: widget.newReleases,
+                            onPlayNow: _askPlayNow,
+                            onPlayPlaylist: _askPlaylist,
+                            onPlayRelease: _askRelease,
+                            onRemoveFromPlaylist: _askRemoveFromPlaylist,
+                            topInset: contentTop,
+                            attribution: _attributionSlot(
+                              controller,
+                              compact: true,
                             ),
+                            menu: _menuButton(compact: true),
+                          ),
+                  ),
+
+                  if (controller.showStoppedBanner)
+                    Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      child: StoppedBanner(
+                        onResume: () =>
+                            controller.openSheet(RailTab.search),
+                      ),
                     ),
 
-                    if (controller.showStoppedBanner)
-                      Positioned(
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        child: StoppedBanner(
-                          onResume: () =>
-                              controller.openSheet(RailTab.search),
-                        ),
+                  if (controller.errorBanner != null)
+                    Positioned(
+                      top: contentTop,
+                      left: 0,
+                      right: 0,
+                      child: ErrorBanner(
+                        message: controller.errorBanner!,
+                        onDismiss: controller.dismissError,
                       ),
+                    )
+                  // エラーと同じ場所なので、出るときはエラーを優先する。
+                  else if (widget.needsReauthorization && !_reauthDismissed)
+                    Positioned(
+                      top: contentTop,
+                      left: 0,
+                      right: 0,
+                      child: ReauthBanner(
+                        busy: widget.authBusy,
+                        onReauthorize: widget.onReauthorize ?? () {},
+                        onDismiss: () =>
+                            setState(() => _reauthDismissed = true),
+                      ),
+                    ),
 
-                    if (controller.errorBanner != null)
-                      Positioned(
-                        top: contentTop,
-                        left: 0,
-                        right: 0,
-                        child: ErrorBanner(
-                          message: controller.errorBanner!,
-                          onDismiss: controller.dismissError,
-                        ),
-                      )
-                    // エラーと同じ場所なので、出るときはエラーを優先する。
-                    else if (widget.needsReauthorization && !_reauthDismissed)
-                      Positioned(
-                        top: contentTop,
-                        left: 0,
-                        right: 0,
-                        child: ReauthBanner(
-                          busy: widget.authBusy,
-                          onReauthorize: widget.onReauthorize ?? () {},
-                          onDismiss: () =>
-                              setState(() => _reauthDismissed = true),
-                        ),
+                  if (controller.devicesOpen)
+                    Positioned(
+                      top: contentTop + (wide ? 86 : 100),
+                      left: popoverLeft,
+                      // スマホは左右対称に伸ばす。
+                      right: wide ? null : popoverLeft,
+                      child: DevicePopover(
+                        devices: controller.devices,
+                        activeDeviceId: controller.activeDevice?.id,
+                        onPick: controller.pickDevice,
+                        onRescan: controller.rescanDevices,
+                        width: wide ? 340 : double.infinity,
                       ),
+                    ),
 
-                    if (controller.devicesOpen)
-                      Positioned(
-                        top: contentTop + (wide ? 86 : 100),
-                        left: popoverLeft,
-                        // スマホは左右対称に伸ばす。
-                        right: wide ? null : popoverLeft,
-                        child: DevicePopover(
-                          devices: controller.devices,
-                          activeDeviceId: controller.activeDevice?.id,
-                          onPick: controller.pickDevice,
-                          onRescan: controller.rescanDevices,
-                          width: wide ? 340 : double.infinity,
-                        ),
+                  if (controller.deviceLost)
+                    Positioned.fill(
+                      child: NoDeviceOverlay(
+                        onRescan: controller.rescanDevices,
+                        onDismiss: controller.dismissNoDevice,
                       ),
+                    ),
 
-                    if (controller.deviceLost)
-                      Positioned.fill(
-                        child: NoDeviceOverlay(
-                          onRescan: controller.rescanDevices,
-                          onDismiss: controller.dismissNoDevice,
-                        ),
+                  if (_pendingPlayNow != null)
+                    Positioned.fill(
+                      child: PlayNowConfirm(
+                        track: _pendingPlayNow!,
+                        queueCount: controller.upNext.length,
+                        onConfirm: () {
+                          final track = _pendingPlayNow!;
+                          setState(() => _pendingPlayNow = null);
+                          controller.playNow(track);
+                        },
+                        onCancel: () =>
+                            setState(() => _pendingPlayNow = null),
                       ),
+                    ),
 
-                    if (_pendingPlayNow != null)
-                      Positioned.fill(
-                        child: PlayNowConfirm(
-                          track: _pendingPlayNow!,
-                          queueCount: controller.upNext.length,
-                          onConfirm: () {
-                            final track = _pendingPlayNow!;
-                            setState(() => _pendingPlayNow = null);
-                            controller.playNow(track);
-                          },
-                          onCancel: () =>
-                              setState(() => _pendingPlayNow = null),
-                        ),
+                  if (_pendingPlaylist != null)
+                    Positioned.fill(
+                      child: PlaylistConfirm(
+                        playlist: _pendingPlaylist!,
+                        queueCount: controller.upNext.length,
+                        initialShuffle: controller.shuffleOn,
+                        onConfirm: (shuffle) {
+                          final playlist = _pendingPlaylist!;
+                          setState(() => _pendingPlaylist = null);
+                          controller.playPlaylist(
+                            playlist,
+                            shuffle: shuffle,
+                          );
+                        },
+                        onCancel: () =>
+                            setState(() => _pendingPlaylist = null),
                       ),
+                    ),
 
-                    if (_pendingPlaylist != null)
-                      Positioned.fill(
-                        child: PlaylistConfirm(
-                          playlist: _pendingPlaylist!,
-                          queueCount: controller.upNext.length,
-                          initialShuffle: controller.shuffleOn,
-                          onConfirm: (shuffle) {
-                            final playlist = _pendingPlaylist!;
-                            setState(() => _pendingPlaylist = null);
-                            controller.playPlaylist(
-                              playlist,
-                              shuffle: shuffle,
-                            );
-                          },
-                          onCancel: () =>
-                              setState(() => _pendingPlaylist = null),
-                        ),
+                  if (_pendingRemoval != null)
+                    Positioned.fill(
+                      child: PlaylistRemoveConfirm(
+                        playlist: _pendingRemoval!.$1,
+                        track: _pendingRemoval!.$2,
+                        onConfirm: () {
+                          final (playlist, track) = _pendingRemoval!;
+                          setState(() => _pendingRemoval = null);
+                          controller.removeFromPlaylist(playlist, track);
+                        },
+                        onCancel: () =>
+                            setState(() => _pendingRemoval = null),
                       ),
+                    ),
 
-                    if (_pendingRemoval != null)
-                      Positioned.fill(
-                        child: PlaylistRemoveConfirm(
-                          playlist: _pendingRemoval!.$1,
-                          track: _pendingRemoval!.$2,
-                          onConfirm: () {
-                            final (playlist, track) = _pendingRemoval!;
-                            setState(() => _pendingRemoval = null);
-                            controller.removeFromPlaylist(playlist, track);
-                          },
-                          onCancel: () =>
-                              setState(() => _pendingRemoval = null),
-                        ),
+                  if (_pendingAlbum != null)
+                    Positioned.fill(
+                      child: ReleasePlayConfirm(
+                        album: _pendingAlbum!,
+                        queueCount: controller.upNext.length,
+                        onConfirm: () {
+                          final album = _pendingAlbum!;
+                          setState(() => _pendingAlbum = null);
+                          controller.playAlbum(album);
+                        },
+                        onCancel: () => setState(() => _pendingAlbum = null),
                       ),
+                    ),
 
-                    if (_pendingAlbum != null)
-                      Positioned.fill(
-                        child: ReleasePlayConfirm(
-                          album: _pendingAlbum!,
-                          queueCount: controller.upNext.length,
-                          onConfirm: () {
-                            final album = _pendingAlbum!;
-                            setState(() => _pendingAlbum = null);
-                            controller.playAlbum(album);
-                          },
-                          onCancel: () => setState(() => _pendingAlbum = null),
-                        ),
-                      ),
-
-                    if (controller.toast != null)
-                      Positioned(
-                        left: 20,
-                        right: 20,
-                        bottom: 34,
-                        child: Center(child: AppToast(text: controller.toast!)),
-                      ),
-                  ],
-                ),
+                  if (controller.toast != null)
+                    Positioned(
+                      left: 20,
+                      right: 20,
+                      bottom: 34,
+                      child: Center(child: AppToast(text: controller.toast!)),
+                    ),
+                ],
               ),
             ),
           ),
