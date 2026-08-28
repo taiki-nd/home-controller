@@ -534,3 +534,88 @@ String formatDuration(Duration d) {
   final total = d.inSeconds.clamp(0, 86400);
   return '${total ~/ 60}:${(total % 60).toString().padLeft(2, '0')}';
 }
+
+/// 「次に鳴る 1 曲」を大きく見せるカード。
+///
+/// **music と QOBUZ で同じ形を使う。** どちらの Up next も、先頭だけは
+/// 一覧から持ち上げて主役にする（あとは番号付きの行が続く）。
+/// モデルを取らずに文字列で受けるのは、Spotify の `Track` と QOBUZ の
+/// `QobuzTrack` の両方から作れるようにするため。
+class NextUpCard extends StatelessWidget {
+  const NextUpCard({
+    super.key,
+    required this.title,
+    required this.accent,
+    required this.compact,
+    this.subtitle,
+    this.imageUrl,
+    this.trailing,
+  });
+
+  final String title;
+
+  /// アーティスト名。QOBUZ 側は付いていない曲があるので出さない。
+  final String? subtitle;
+  final String? imageUrl;
+  final Color accent;
+  final bool compact;
+
+  /// 行の右端（QOBUZ はここに「キューから外す」を置く）。
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.all(compact ? 14 : 16),
+      decoration: BoxDecoration(
+        borderRadius: AppRadius.card,
+        color: AppColors.white(0.07),
+        border: Border.all(color: AppColors.white(0.1)),
+      ),
+      child: Row(
+        children: [
+          Artwork(
+            url: imageUrl,
+            size: compact ? 72 : 96,
+            radius: AppRadius.thumb,
+          ),
+          SizedBox(width: compact ? 14 : 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CapsLabel('Next up', size: compact ? 10 : 11, color: accent),
+                SizedBox(height: compact ? 4 : 6),
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppText.body(
+                    compact ? 19 : 24,
+                    weight: FontWeight.w900,
+                    height: 1.15,
+                    letterSpacing: -0.5,
+                  ),
+                ),
+                if (subtitle != null && subtitle!.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppText.body(
+                      compact ? 13 : 15,
+                      color: AppColors.white(0.6),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (trailing != null) ...[const SizedBox(width: 8), trailing!],
+        ],
+      ),
+    );
+  }
+}

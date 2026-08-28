@@ -23,7 +23,13 @@ class QueuePanel extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (next != null)
-          _NextUpCard(track: next, accent: accent, compact: compact)
+          NextUpCard(
+            title: next.name,
+            subtitle: next.artists,
+            imageUrl: next.smallArtworkUrl ?? next.artworkUrl,
+            accent: accent,
+            compact: compact,
+          )
         else
           Container(
             padding: EdgeInsets.symmetric(
@@ -81,71 +87,6 @@ class QueuePanel extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-class _NextUpCard extends StatelessWidget {
-  const _NextUpCard({
-    required this.track,
-    required this.accent,
-    required this.compact,
-  });
-
-  final Track track;
-  final Color accent;
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.all(compact ? 14 : 16),
-      decoration: BoxDecoration(
-        borderRadius: AppRadius.card,
-        color: AppColors.white(0.07),
-        border: Border.all(color: AppColors.white(0.1)),
-      ),
-      child: Row(
-        children: [
-          Artwork(
-            url: track.smallArtworkUrl ?? track.artworkUrl,
-            size: compact ? 72 : 96,
-            radius: AppRadius.thumb,
-          ),
-          SizedBox(width: compact ? 14 : 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                CapsLabel('Next up', size: compact ? 10 : 11, color: accent),
-                SizedBox(height: compact ? 4 : 6),
-                Text(
-                  track.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppText.body(
-                    compact ? 19 : 24,
-                    weight: FontWeight.w900,
-                    height: 1.15,
-                    letterSpacing: -0.5,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  track.artists,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppText.body(
-                    compact ? 13 : 15,
-                    color: AppColors.white(0.6),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
     );
   }
 }
