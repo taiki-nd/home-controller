@@ -862,8 +862,12 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
   }
 
   /// これから鳴る分だけ混ぜる。**鳴っている曲は動かさない。**
-  void _shuffleUpNext() {
-    final head = _index + 1;
+  ///
+  /// ただし [includeCurrent] なら 1 曲目も混ぜる。積み直してこれから鳴らす
+  /// ところなら「鳴っている曲」はまだ無く、先頭を守ると**必ずプレイリストの
+  /// 1 曲目から始まる**——シャッフルに見えない。
+  void _shuffleUpNext({bool includeCurrent = false}) {
+    final head = includeCurrent ? max(_index, 0) : _index + 1;
     if (head >= _queue.length) return;
     final rest = _queue.sublist(head)..shuffle(Random());
     _queue.replaceRange(head, _queue.length, rest);
@@ -1008,7 +1012,13 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
     // するので、差し替えた並びが混ざらないまま鳴り出してしまう。
     if (shuffle != null) {
       _shuffle = shuffle;
-      if (shuffle) _shuffleUpNext();
+      if (shuffle) {
+        // 積み直してこれから鳴らす分は、1 曲目も込みで混ぜる。
+        final fresh =
+            option == QobuzQueueOption.play ||
+            option == QobuzQueueOption.replace;
+        _shuffleUpNext(includeCurrent: fresh);
+      }
     }
     var message = switch (option) {
       QobuzQueueOption.play || QobuzQueueOption.replace => '$name を再生',

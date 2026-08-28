@@ -150,12 +150,29 @@ void main() {
     );
 
     expect(controller.shuffleEnabled, isTrue);
-    // 先頭は鳴っている曲なので動かさない。後ろだけ混ざる。
-    expect(controller.currentTrack?.id, 1);
-    expect(
-      controller.upNext.map((e) => e.track.id),
-      isNot([for (var i = 2; i <= 40; i++) i]),
-    );
+    // **1 曲目も混ざる。** 積み直したところなので守る「鳴っている曲」は無い。
+    expect(controller.queue.map((e) => e.track.id), isNot([
+      for (var i = 1; i <= 40; i++) i,
+    ]));
+    expect(controller.queue.map((e) => e.track.id).toSet(), {
+      for (var i = 1; i <= 40; i++) i,
+    });
+  });
+
+  test('シャッフル再生を繰り返すと、1 曲目もいろいろ変わる', () async {
+    final firsts = <int>{};
+    for (var attempt = 0; attempt < 12; attempt++) {
+      final (controller, api, _) = await started();
+      api.playlistTracks = [for (var i = 1; i <= 40; i++) track(i)];
+      await controller.playPlaylist(
+        const QobuzPlaylist(id: 7, name: 'パーティ 2026', tracksCount: 40),
+        shuffle: true,
+      );
+      firsts.add(controller.currentTrack!.id);
+      controller.dispose();
+    }
+    // 先頭固定なら {1} だけになる。
+    expect(firsts.length, greaterThan(1));
   });
 
   test('鳴っている曲より前を消しても現在位置がずれない', () async {
