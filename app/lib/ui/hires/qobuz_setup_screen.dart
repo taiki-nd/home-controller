@@ -172,7 +172,7 @@ class _QobuzSetupScreenState extends State<QobuzSetupScreen> {
                       ),
                     ),
                   const SizedBox(width: 2),
-                  const CapsLabel('HI-RES'),
+                  const CapsLabel('QOBUZ'),
                 ],
               ),
             ),

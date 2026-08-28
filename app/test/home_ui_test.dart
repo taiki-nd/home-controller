@@ -12,8 +12,10 @@ import 'package:spotify_remote/theme/tokens.dart';
 import 'package:spotify_remote/ui/app_shell.dart';
 import 'package:spotify_remote/ui/home/ha_setup_screen.dart';
 import 'package:spotify_remote/ui/home/home_screen.dart';
+import 'package:spotify_remote/ui/hires/qobuz_setup_screen.dart';
 import 'package:spotify_remote/ui/home/widgets/home_tiles.dart';
 import 'package:spotify_remote/ui/widgets/atoms.dart';
+import 'package:spotify_remote/ui/widgets/transport.dart';
 import 'package:spotify_remote/ui/music/music_view.dart';
 
 import 'ha_support.dart';
@@ -204,7 +206,7 @@ void main() {
   });
 
   group('AppShell', () {
-    testWidgets('music を持たないビルドでは Drawer に MUSIC が出ない', (tester) async {
+    testWidgets('music を持たないビルドでは Drawer に SPOTIFY が出ない', (tester) async {
       await setSurface(tester, _ipad);
       final controller = HomeController(credentials: FakeHaCredentials());
 
@@ -220,7 +222,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
 
       expect(find.text('HOME'), findsWidgets);
-      expect(find.text('MUSIC'), findsNothing);
+      expect(find.text('SPOTIFY'), findsNothing);
       // music が無いので IndexedStack ごと作らない。
       expect(find.byType(IndexedStack), findsNothing);
       controller.dispose();
@@ -363,6 +365,35 @@ void main() {
 
     // アートワークが読めないと palette_generator が 15 秒のタイマーを残す。
     // 実機では起きないが、ここで消化しておかないとテストが落ちる。
+    await tester.pump(const Duration(seconds: 16));
+    drainImageErrors(tester);
+  });
+
+  testWidgets('make app-mock: QOBUZ の再生画面まで開ける', (tester) async {
+    // **モックで Qobuz の UI を確認できることそのものを担保する。**
+    // 偽 Qobuz / 偽 WiiM を挿し忘れると設定画面から先へ進めなくなり、
+    // ブラウザで開くまで気づけない。
+    await setSurface(tester, _ipad);
+
+    await tester.pumpWidget(const MockApp());
+    await tester.pump(const Duration(milliseconds: 400));
+    drainImageErrors(tester);
+
+    tester.state<ScaffoldState>(find.byType(Scaffold).first).openDrawer();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(
+      find.descendant(of: find.byType(Drawer), matching: find.text('QOBUZ')),
+    );
+    await tester.pump(const Duration(milliseconds: 400));
+    drainImageErrors(tester);
+
+    // 設定済みで始まるので、設定画面ではなく再生画面が出る。
+    expect(find.byType(QobuzSetupScreen), findsNothing);
+    // music と同じ部品を使っている（揃えた結果がここに出る）。
+    expect(find.byType(TransportControls), findsOneWidget);
+    expect(find.byType(ProgressRow), findsOneWidget);
+
     await tester.pump(const Duration(seconds: 16));
     drainImageErrors(tester);
   });

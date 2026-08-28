@@ -241,7 +241,7 @@ class _ShellDrawer extends StatelessWidget {
                 if (music != null)
                   _ModeRow(
                     icon: Icons.music_note,
-                    label: 'MUSIC',
+                    label: 'SPOTIFY',
                     subtitle: music.drawerSubtitle,
                     selected: mode == AppMode.music,
                     onTap: () => onSelect(AppMode.music),
@@ -249,7 +249,7 @@ class _ShellDrawer extends StatelessWidget {
                 if (assistant != null)
                   _ModeRow(
                     icon: Icons.graphic_eq,
-                    label: 'HI-RES',
+                    label: 'QOBUZ',
                     subtitle: assistant.drawerSubtitle,
                     selected: mode == AppMode.assistant,
                     onTap: () => onSelect(AppMode.assistant),
@@ -273,7 +273,7 @@ class _ShellDrawer extends StatelessWidget {
                 if (assistant != null)
                   _ModeRow(
                     icon: Icons.settings_ethernet,
-                    label: 'HI-RES の接続設定',
+                    label: 'QOBUZ の接続設定',
                     subtitle: assistant.wiimConnection?.host ?? '未設定',
                     selected: false,
                     onTap: onOpenAssistantSetup,
