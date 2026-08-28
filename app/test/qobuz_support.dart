@@ -186,6 +186,7 @@ class FakeWiimApi extends WiimApi {
     String url, {
     WiimTrackMetadata? meta,
     WiimUrlEncoding? encoding,
+    DateTime? now,
   }) async {
     playedMeta.add(meta);
     commands.add('play');

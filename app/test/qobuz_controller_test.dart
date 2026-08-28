@@ -89,6 +89,22 @@ void main() {
     expect(controller.currentTrack?.displayImageUrl, 'https://img/1_600.jpg');
   });
 
+  test('UPnP に落ちたら 1 度だけ知らせる（本体の画面が既定に戻る合図）', () async {
+    final (controller, _, wiim) = await started();
+    addTearDown(controller.dispose);
+    wiim.upnpAvailable = false;
+
+    await controller.enqueueTracks([track(1), track(2)]);
+
+    expect(controller.toast, contains('UPnP'));
+
+    // 2 曲目でも同じことを言わない。**曲送りのたびに出すとうるさい。**
+    controller.dismissToast();
+    await controller.skipNext();
+    await pumpEventQueue();
+    expect(controller.toast, isNull);
+  });
+
   test('「次に再生」は鳴っている曲の直後に割り込む', () async {
     final (controller, _, _) = await started();
     addTearDown(controller.dispose);

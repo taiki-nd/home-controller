@@ -1191,6 +1191,7 @@ class _MockWiimApi extends WiimApi {
     String url, {
     WiimTrackMetadata? meta,
     WiimUrlEncoding? encoding,
+    DateTime? now,
   }) async {
     // URL の末尾の track_id から長さを引く。曲ごとに尺が変わって見える。
     final id =

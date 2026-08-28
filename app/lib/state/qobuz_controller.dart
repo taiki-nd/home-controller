@@ -184,6 +184,9 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
   /// 送った URL が実際に鳴ったか。**まだなら載せ方を切り替えて試す**（§5.2）。
   bool _encodingConfirmed = false;
 
+  /// UPnP に落ちたことをもう伝えたか。**曲ごとには言わない**（§5.5）。
+  bool _upnpFellBack = false;
+
   QobuzTab _tab = QobuzTab.queue;
 
   /// スマホのボトムシートが開いているか（music 側と同じ作法）。
@@ -1094,8 +1097,17 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
       // UPnP で通ったなら載せ方を試し直す必要が無い（§5.2 は HTTP API の話）。
       if (route == WiimPlayRoute.upnp) {
         _encodingConfirmed = true;
+        _upnpFellBack = false;
       } else if (!retry) {
         _encodingConfirmed = false;
+      }
+      // **落ちたことを 1 度だけ言う。** 黙って HTTP API に倒れると、鳴っては
+      // いるのに本体の画面だけ署名付き URL と既定のジャケットに戻り、
+      // アプリ側からは何も分からない。曲ごとに出すとうるさいので、
+      // 通っていた状態から落ちた回だけ。
+      if (route == WiimPlayRoute.httpApi && !_upnpFellBack) {
+        _upnpFellBack = true;
+        _showToast('WiiM の UPnP に届かず、本体の画面は曲名なしになります');
       }
       _error = null;
       notifyListeners();

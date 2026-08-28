@@ -66,11 +66,20 @@ class WiimApi {
   /// **UPnP が通っている間はこれを使わない**（§5.2 の問題ごと消える）。
   WiimUrlEncoding urlEncoding = WiimUrlEncoding.raw;
 
-  /// UPnP 経路をまだ信じているか。
+  /// UPnP を最後に断られた時刻。通っている間は null。
   ///
-  /// 一度でも断られたら HTTP API に倒したまま同じ個体で試し直さない
-  /// （曲送りのたびに 5 秒待つのを避ける）。接続先を入れ替えたら戻す。
-  bool _upnpAvailable = true;
+  /// **諦めっぱなしにしない。** 曲送りのたびに 5 秒待たされるのは避けたい
+  /// が、一度の取りこぼし（本体の再起動中・スリープ復帰直後・Wi-Fi の瞬断）
+  /// で倒れたままだと、以降そのアプリ起動の間ずっと本体の画面が署名付き
+  /// URL と既定のジャケットに戻る。[_upnpRetryAfter] 空けて試し直す。
+  DateTime? _upnpDeniedAt;
+
+  /// 断られてから試し直すまで。曲送り連打で 5 秒待ちが並ばない程度に置く。
+  static const _upnpRetryAfter = Duration(minutes: 2);
+
+  /// 直近の [play] が UPnP で通ったか。**画面に出すため**——黙って落とすと、
+  /// 本体の表示だけ既定に戻った理由が誰にも分からない。
+  bool get upnpDenied => _upnpDeniedAt != null;
 
   WiimConnection? _connection;
 
@@ -80,7 +89,7 @@ class WiimApi {
   set connection(WiimConnection? value) {
     _connection = value;
     _upnp.connection = value;
-    _upnpAvailable = true;
+    _upnpDeniedAt = null;
   }
 
   bool get isConfigured => _connection != null;
@@ -111,18 +120,27 @@ class WiimApi {
     String url, {
     WiimTrackMetadata? meta,
     WiimUrlEncoding? encoding,
+    DateTime? now,
   }) async {
-    if (meta != null && _upnpAvailable) {
+    if (meta != null && _upnpReady(now: now)) {
       try {
         await _upnp.play(url, meta);
+        _upnpDeniedAt = null;
         return WiimPlayRoute.upnp;
       } on WiimUpnpException catch (e) {
         debugPrint('WiimApi: UPnP を諦めて HTTP API に落とします（$e）');
-        _upnpAvailable = false;
+        _upnpDeniedAt = now ?? DateTime.now();
       }
     }
     await _send('setPlayerCmd:play:${(encoding ?? urlEncoding).apply(url)}');
     return WiimPlayRoute.httpApi;
+  }
+
+  /// UPnP を試してよいか。断られた直後だけ避ける。
+  bool _upnpReady({DateTime? now}) {
+    final deniedAt = _upnpDeniedAt;
+    if (deniedAt == null) return true;
+    return (now ?? DateTime.now()).difference(deniedAt) >= _upnpRetryAfter;
   }
 
   Future<void> pause() => _send('setPlayerCmd:pause');
