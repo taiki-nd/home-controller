@@ -429,6 +429,37 @@ void main() {
     await tester.pump(const Duration(seconds: 16));
     drainImageErrors(tester);
   });
+
+  testWidgets('QOBUZ: Up next の組み立てが music と揃っている', (tester) async {
+    // **構成が揃っているかは画面でしか分からない。** 先頭を持ち上げた
+    // カードも、2 から始まる番号も、コントローラ側には出てこない。
+    await setSurface(tester, _ipad);
+    await openQobuz(tester);
+
+    await tester.tap(find.text('Library'));
+    await tester.pump(const Duration(milliseconds: 400));
+    drainImageErrors(tester);
+    await tester.tap(find.widgetWithText(WhiteButton, 'Play').first);
+    await tester.pump(const Duration(milliseconds: 400));
+    drainImageErrors(tester);
+    await tester.tap(find.widgetWithText(WhiteButton, 'このリストを再生'));
+    await tester.pump(const Duration(milliseconds: 400));
+    drainImageErrors(tester);
+
+    await tester.tap(find.text('Up next').last);
+    await tester.pump(const Duration(milliseconds: 400));
+    drainImageErrors(tester);
+
+    // music の QueuePanel と同じ 3 点。
+    expect(find.byType(NextUpCard), findsOneWidget);
+    expect(find.textContaining('TRACKS AHEAD'), findsOneWidget);
+    // 先頭はカードに出したので、一覧は 2 から始まる。
+    expect(find.text('2'), findsOneWidget);
+    expect(find.text('1'), findsNothing);
+
+    await tester.pump(const Duration(seconds: 16));
+    drainImageErrors(tester);
+  });
 }
 
 /// モックアプリを起動して Drawer から QOBUZ の再生画面まで進める。

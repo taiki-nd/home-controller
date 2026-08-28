@@ -750,6 +750,10 @@ class _IconToggle extends StatelessWidget {
 }
 
 /// キュー / ライブラリ / 検索。
+///
+/// **music の `QueuePanel` と同じ組み立て。** 先頭は [NextUpCard] に持ち上げ、
+/// 残りを 2 番から番号付きで並べる。あちらと違ってこちらはキューを自分で
+/// 持っているので、並べ替えと「外す」は残す。
 class _QueueList extends StatelessWidget {
   const _QueueList({required this.controller});
 
@@ -761,45 +765,85 @@ class _QueueList extends StatelessWidget {
     if (items.isEmpty) {
       return _Empty(
         text: controller.status == QobuzStatus.connected
-            ? 'キューは空です。ライブラリか検索から積んでください。'
+            ? 'この先のキューは空です。\nライブラリか検索から積むと続きます。'
             : '接続中…',
       );
     }
-    return ReorderableListView.builder(
+    final next = items.first;
+    final rest = items.sublist(1);
+    return Padding(
       padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
-      itemCount: items.length,
-      onReorder: controller.moveItem,
-      buildDefaultDragHandles: false,
-      itemBuilder: (context, index) {
-        final item = items[index];
-        return _TrackRow(
-          key: ValueKey(item.id),
-          title: item.track.displayTitle,
-          subtitle: item.track.artist,
-          imageUrl: item.track.imageUrl,
-          duration: item.track.duration,
-          hires: item.track.hiresStreamable,
-          onTap: () => controller.playItem(item),
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                onPressed: () => controller.removeItem(item),
-                tooltip: 'キューから外す',
-                icon: Icon(Icons.close, size: 16, color: AppColors.white(0.35)),
-              ),
-              ReorderableDragStartListener(
-                index: index,
-                child: Icon(
-                  Icons.drag_handle_rounded,
-                  size: 18,
-                  color: AppColors.white(0.3),
-                ),
-              ),
-            ],
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          NextUpCard(
+            title: next.track.displayTitle,
+            subtitle: next.track.artist,
+            imageUrl: next.track.imageUrl,
+            accent: controller.palette.accent,
+            compact: true,
+            trailing: IconButton(
+              onPressed: () => controller.removeItem(next),
+              tooltip: 'キューから外す',
+              icon: Icon(Icons.close, size: 16, color: AppColors.white(0.35)),
+            ),
           ),
-        );
-      },
+          const SizedBox(height: 14),
+          Padding(
+            padding: const EdgeInsets.only(left: 4, bottom: 8),
+            child: CapsLabel(
+              '${items.length} tracks ahead',
+              size: 10,
+              color: AppColors.white(0.35),
+            ),
+          ),
+          Expanded(
+            child: ReorderableListView.builder(
+              padding: EdgeInsets.zero,
+              itemCount: rest.length,
+              // 先頭をカードに持ち上げたぶん、キュー側の添字は 1 つずれる。
+              onReorder: (from, to) =>
+                  controller.moveItem(from + 1, to + 1),
+              buildDefaultDragHandles: false,
+              itemBuilder: (context, index) {
+                final item = rest[index];
+                return _TrackRow(
+                  key: ValueKey(item.id),
+                  index: index + 2,
+                  title: item.track.displayTitle,
+                  subtitle: item.track.artist,
+                  imageUrl: item.track.imageUrl,
+                  duration: item.track.duration,
+                  hires: item.track.hiresStreamable,
+                  onTap: () => controller.playItem(item),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        onPressed: () => controller.removeItem(item),
+                        tooltip: 'キューから外す',
+                        icon: Icon(
+                          Icons.close,
+                          size: 16,
+                          color: AppColors.white(0.35),
+                        ),
+                      ),
+                      ReorderableDragStartListener(
+                        index: index,
+                        child: Icon(
+                          Icons.drag_handle_rounded,
+                          size: 18,
+                          color: AppColors.white(0.3),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1256,6 +1300,7 @@ class _TrackRow extends StatelessWidget {
     this.hires = false,
     this.dimmed = false,
     this.trailing,
+    this.index,
   });
 
   final String title;
@@ -1270,6 +1315,10 @@ class _TrackRow extends StatelessWidget {
   final VoidCallback onTap;
   final Widget? trailing;
 
+  /// キューでの位置。music の `_QueueRow` と同じで、先頭をカードに
+  /// 持ち上げているので 2 から始まる。一覧・検索では付けない。
+  final int? index;
+
   @override
   Widget build(BuildContext context) {
     final opacity = dimmed ? 0.4 : 1.0;
@@ -1280,6 +1329,17 @@ class _TrackRow extends StatelessWidget {
         opacity: opacity,
         child: Row(
           children: [
+            if (index != null) ...[
+              SizedBox(
+                width: 18,
+                child: Text(
+                  '$index',
+                  textAlign: TextAlign.right,
+                  style: AppText.grotesk(size: 12, color: AppColors.white(0.3)),
+                ),
+              ),
+              const SizedBox(width: 12),
+            ],
             Artwork(url: imageUrl, size: 40, radius: AppRadius.thumbSmall),
             const SizedBox(width: 12),
             Expanded(
