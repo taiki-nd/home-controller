@@ -205,7 +205,7 @@ class _TabletBody extends StatelessWidget {
           child: TabletNowPlaying(
             controller: controller,
             topInset: topInset,
-            artworkUrl: track?.imageUrl,
+            artworkUrl: track?.displayImageUrl,
             metaLine:
                 _metaLine(track) ??
                 (controller.isStopped ? 'LAST PLAYED' : 'NOW PLAYING'),
@@ -267,7 +267,7 @@ class _NowPlaying extends StatelessWidget {
       controller: controller,
       topInset: topInset,
       statusLabel: _statusLabel(controller),
-      artworkUrl: track?.imageUrl,
+      artworkUrl: track?.displayImageUrl,
       title: track?.displayTitle ?? '再生していません',
       subtitle: track?.artist ?? '',
       header: _HeaderRow(controller: controller, menu: menu),

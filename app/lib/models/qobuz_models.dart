@@ -47,6 +47,7 @@ class QobuzTrack {
     this.artist,
     this.albumTitle,
     this.imageUrl,
+    this.largeImageUrl,
     this.duration,
     this.streamable = true,
     this.hiresStreamable = false,
@@ -64,7 +65,14 @@ class QobuzTrack {
 
   final String? artist;
   final String? albumTitle;
+
+  /// 一覧のサムネと **WiiM 本体に渡すぶん**（`small` = 230px）。
   final String? imageUrl;
+
+  /// 再生画面のアートワーク用（`large` = 600px）。無ければ null。
+  /// 直接は使わず [displayImageUrl] を通す。
+  final String? largeImageUrl;
+
   final Duration? duration;
 
   /// 契約と地域で鳴らせない曲がある。**false のものはキューに入れない。**
@@ -85,6 +93,10 @@ class QobuzTrack {
   /// プレイリスト内の行 ID。**`id` とは別物**（§3 の落とし穴 1）。
   /// 削除と並べ替えはこちらを使う。プレイリスト経由で取ったときだけ入る。
   final int? playlistTrackId;
+
+  /// 大きく出すときの画像。**アプリ内の再生画面だけがこれを使う。**
+  /// `large` が無い応答もあるので [imageUrl] に落ちる。
+  String? get displayImageUrl => largeImageUrl ?? imageUrl;
 
   /// 画面に出す曲名。`version` があれば括弧で添える。
   String get displayTitle {
@@ -121,6 +133,7 @@ class QobuzTrack {
           (albumJson == null ? null : _artistOf(albumJson)),
       albumTitle: albumJson?['title'] as String?,
       imageUrl: albumJson == null ? null : _imageOf(albumJson),
+      largeImageUrl: albumJson == null ? null : _largeImageOf(albumJson),
       duration: seconds == null || seconds == 0
           ? null
           : Duration(seconds: seconds),
@@ -142,6 +155,7 @@ class QobuzTrack {
     artist: artist,
     albumTitle: albumTitle,
     imageUrl: imageUrl,
+    largeImageUrl: largeImageUrl,
     duration: duration,
     streamable: streamable,
     hiresStreamable: hiresStreamable,
@@ -433,9 +447,13 @@ String? _artistOf(Map<String, dynamic> json) {
   return null;
 }
 
-/// 画像は `image: {small, thumbnail, large, back}` で来る。
-/// **large を使わない。** WiiM のファームは長い URL でアートワークを落とすこと
-/// があり、壁掛けの表示サイズでは small で足りる。
+/// 画像は `image: {small, thumbnail, large, back}` で来る（small=230、
+/// thumbnail=50、large=600 px）。
+///
+/// **こちらは small 止まり。** 一覧のサムネは 62px までなので足りるし、
+/// **WiiM 本体に渡すのもこれ**（`artUrl`）——本体側で大きい絵を掴ませて
+/// 表示が崩れるのを避けたいので、機器に出す URL はここから変えない。
+/// 再生画面の大きいアートワークは [_largeImageOf] を使う。
 String? _imageOf(Map<String, dynamic> json) {
   final image = json['image'];
   if (image is Map) {
@@ -445,5 +463,19 @@ String? _imageOf(Map<String, dynamic> json) {
     }
   }
   if (image is String && image.isNotEmpty) return image;
+  return null;
+}
+
+/// 再生画面のアートワーク用。`large`（600px）だけを見る。
+///
+/// **小さいほうへ落とさない。** 見つからなければ null を返して、呼ぶ側
+/// （[QobuzTrack.displayImageUrl]）で [_imageOf] の結果に落とす。ここで
+/// thumbnail まで拾うと、50px を全画面に引き伸ばすことになる。
+String? _largeImageOf(Map<String, dynamic> json) {
+  final image = json['image'];
+  if (image is Map) {
+    final url = image['large'];
+    if (url is String && url.isNotEmpty) return url;
+  }
   return null;
 }

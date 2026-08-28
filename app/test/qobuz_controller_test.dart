@@ -71,6 +71,24 @@ void main() {
     expect(wiim.playedUrls.single, contains('/file/1.flac'));
   });
 
+  test('WiiM 本体に渡す絵は small のまま（アプリ内だけ large を使う）', () async {
+    final (controller, _, wiim) = await started();
+    addTearDown(controller.dispose);
+
+    await controller.enqueueTracks([
+      track(
+        1,
+        imageUrl: 'https://img/1_230.jpg',
+        largeImageUrl: 'https://img/1_600.jpg',
+      ),
+    ]);
+
+    // **本体の表示は触らない。** 大きい絵を掴ませて崩れるのを避けるため、
+    // 機器に出す URL は small で据え置く。
+    expect(wiim.playedMeta.single?.artUrl, 'https://img/1_230.jpg');
+    expect(controller.currentTrack?.displayImageUrl, 'https://img/1_600.jpg');
+  });
+
   test('「次に再生」は鳴っている曲の直後に割り込む', () async {
     final (controller, _, _) = await started();
     addTearDown(controller.dispose);
