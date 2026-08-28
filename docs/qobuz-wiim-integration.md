@@ -26,6 +26,7 @@ hi-res モードの設計メモ。**Music Assistant を介さず、iPad から Q
 | 8 | ~~`NSLocalNetworkUsageDescription`（§6）~~ | `app/ios/Runner/Info.plist` | ✅ |
 | 9 | **実機で疎通確認**（まだ一度も本物の Qobuz / WiiM に繋いでいない） | iPad | |
 | 10 | 署名付き URL の載せ方をどちらかに確定する（§5.2） | 実機 | |
+| 16 | ~~WiiM 本体のディスプレイに曲名とジャケットを出す（§5.5）~~ | `app/lib/services/wiim_upnp.dart` | ✅ |
 | 11 | プレイリスト編集の UI（API は実装済み、§3.5） | `app/lib/ui/hires/` | |
 | 12 | ギャップレス（方式 B）が要るかの判断（§5.3） | 実機 | |
 | 13 | ~~LAN から WiiM を探す（§5.1）~~ | `app/lib/services/wiim_discovery.dart` | ✅ |
@@ -82,6 +83,7 @@ app/lib/
   services/qobuz_credentials.dart / wiim_credentials.dart  Keychain
   services/qobuz_web_login.dart アプリ内ブラウザから鍵とトークンを取る（§3.2）
   services/wiim_api.dart        httpapi.asp クライアント
+  services/wiim_upnp.dart       UPnP AVTransport（見出しを渡す、§5.5）
   services/wiim_discovery.dart  LAN から WiiM を探す（§5.1）
   services/insecure_adapter*.dart  自己署名証明書を通す口（web 用の空実装つき）
   services/local_addresses*.dart   自分の IPv4（web 用の空実装つき）
@@ -343,6 +345,62 @@ UPnP の PlayQueue を使えば WiiM 側にキューを持たせられるが、
 - 8 秒を過ぎて `stop` になり、**かつ再生位置が進んでいた**なら曲の終わり
 - 位置が 0 のまま止まっているなら掴み損ね。次へ送らずエラーを出す
 
+### 5.5 WiiM 本体のディスプレイに何を出すか（`WiimUpnp`）
+
+**`setPlayerCmd:play:<url>` にはメタデータを載せる口が無い。** 公式の
+HTTP API（`HTTP API for WiiM Products` v1.2）にも引数は URL しかなく、
+この経路で送ると WiiM Ultra の画面には署名付き URL がそのまま出る。
+
+実機（WiiM Ultra / firmware V01-Aug 12 2026）に `GetMediaInfo` を投げると
+何が起きているかがはっきり見える。**枠は最初からあって、埋まっていない
+だけ**だった:
+
+```xml
+<TrackSource>CustomPushUrl</TrackSource>
+<dc:title>https://streaming-qobuz-std.akamaized.net/file?uid=…&amp;hmac=…</dc:title>
+<dc:creator></dc:creator>
+<upnp:artist></upnp:artist>
+<upnp:album></upnp:album>
+<upnp:albumArtURI></upnp:albumArtURI>
+```
+
+埋めるには UPnP の `SetAVTransportURI` に DIDL-Lite を添えて送る
+（`http://<host>:49152/upnp/control/rendertransport1`、`description.xml` の
+AVTransport `controlURL` で確認）。**HTTP API とは別ポート・素の http** なので、
+自己署名証明書を通す Dio を持ち込んではいけない。
+
+送ったあとの `getMetaInfo` はこうなる（実機で確認）:
+
+```json
+{ "album": "Test Album", "title": "テスト曲名 / Test Title",
+  "artist": "Test Artist",
+  "albumArtURI": "https://static.qobuz.com/images/covers/…_600.jpg" }
+```
+
+落とし穴:
+
+1. **DIDL は SOAP の中に文字列として入るので 2 重にエスケープされる。**
+   署名付き URL の `&` は最終的に `&amp;amp;` になる。手で組むと必ず
+   間違えるので `WiimUpnp.escapeXml` を必ず通す。
+2. **空の要素を出すと `unknow` になる**（そのまま画面に出る）。
+   無いものは要素ごと落とす。
+3. `dc:creator` と `upnp:artist` は**両方出す**。どちらを読むかは機種で違う。
+4. **ジャケットは WiiM 本体が自分で取りに行く。** 端末からではなく WiiM から
+   届く URL である必要がある。Qobuz の `static.qobuz.com` は https のまま
+   通ることを実機で確認した。
+5. `SetAVTransportURI` のあとに `Play` を送る。載せただけでは鳴らない。
+6. **UPnP で送っても httpapi 側の操作はそのまま効く**——`pause` /
+   `resume` / `seek` / `vol` / `getPlayerStatus` を実機で確認済み。
+   `vendor` が `CustomPushUrl` から空になるだけで、読んでいる項目は変わらない。
+
+UPnP が断られたら黙って `setPlayerCmd:play:<url>` に落とす（鳴ることの方が
+大事）。一度断られた個体では以降試さない——曲送りのたびに 5 秒待つのを
+避けるため。接続先を入れ替えたら試し直す。
+
+**なお UPnP 経路では §5.2 の載せ方問題は起きない。** URL は SOAP の中に
+XML として入るので、httpapi.asp のクエリ解析を通らない。`_encodingConfirmed`
+は UPnP で通った時点で立てて、percent-encode の試し直しをしない。
+
 ---
 
 ## 6. セキュリティと配布
@@ -435,6 +493,8 @@ music と混ぜない）。
   叩く口を差し替えた走査。**ネットワークは触らない**
 - `qobuz_setup_test.dart` — 探索 → 選択、ブラウザからの取り込み（§3.2）
 - `wiim_status_test.dart` — 文字列の数値・16 進・時計での補間
+- `wiim_upnp_test.dart` — DIDL-Lite の組み立て（§5.5）。**2 重エスケープと
+  空要素を落とすところ**を固定する。SOAP は投げない
 - `qobuz_controller_test.dart` — キュー（次に再生 / 追加 / 並べ替え / 削除 /
   曲送り / リピート / 鳴らせない曲の扱い）
 

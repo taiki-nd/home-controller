@@ -12,6 +12,7 @@ import '../services/qobuz_web_login.dart';
 import '../services/wiim_api.dart';
 import '../services/wiim_credentials.dart';
 import '../services/wiim_discovery.dart';
+import '../services/wiim_upnp.dart';
 import 'playback_surface.dart';
 
 /// 画面が知りたい状態。
@@ -1066,9 +1067,26 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
         format: QobuzFormat.hires192,
       );
       if (_disposed || currentItem?.id != item.id) return;
-      await _wiim.play(file.url);
+      // **見出しは WiiM 本体のディスプレイのために渡す**（§5.5）。
+      // これが無いと Ultra の画面には署名付き URL がそのまま出る。
+      final route = await _wiim.play(
+        file.url,
+        meta: WiimTrackMetadata(
+          title: item.track.displayTitle,
+          artist: item.track.artist,
+          album: item.track.albumTitle,
+          artUrl: item.track.imageUrl,
+          duration: item.track.duration,
+          mimeType: file.mimeType,
+        ),
+      );
       _startedAt = DateTime.now();
-      if (!retry) _encodingConfirmed = false;
+      // UPnP で通ったなら載せ方を試し直す必要が無い（§5.2 は HTTP API の話）。
+      if (route == WiimPlayRoute.upnp) {
+        _encodingConfirmed = true;
+      } else if (!retry) {
+        _encodingConfirmed = false;
+      }
       _error = null;
       notifyListeners();
       await _refreshSoon();

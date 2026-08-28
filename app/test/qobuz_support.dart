@@ -5,6 +5,7 @@ import 'package:spotify_remote/services/qobuz_api.dart';
 import 'package:spotify_remote/services/qobuz_credentials.dart';
 import 'package:spotify_remote/services/wiim_api.dart';
 import 'package:spotify_remote/services/wiim_credentials.dart';
+import 'package:spotify_remote/services/wiim_upnp.dart';
 import 'package:spotify_remote/state/qobuz_controller.dart';
 
 /// hi-res 側のテスト用の偽物一式。
@@ -155,7 +156,13 @@ class FakeWiimApi extends WiimApi {
 
   /// 投げた URL を順に。
   final playedUrls = <String>[];
+
+  /// 一緒に渡した見出し（WiiM 本体のディスプレイ用）。
+  final playedMeta = <WiimTrackMetadata?>[];
   final commands = <String>[];
+
+  /// UPnP が通らない個体を作る。HTTP API に落ちることを見るのに使う。
+  bool upnpAvailable = true;
 
   WiimStatus current = idleStatus();
 
@@ -175,9 +182,20 @@ class FakeWiimApi extends WiimApi {
   }
 
   @override
-  Future<void> play(String url, {WiimUrlEncoding? encoding}) async {
-    playedUrls.add((encoding ?? urlEncoding).apply(url));
+  Future<WiimPlayRoute> play(
+    String url, {
+    WiimTrackMetadata? meta,
+    WiimUrlEncoding? encoding,
+  }) async {
+    playedMeta.add(meta);
     commands.add('play');
+    if (meta != null && upnpAvailable) {
+      // UPnP はエスケープを気にしないので URL は素のまま載る。
+      playedUrls.add(url);
+      return WiimPlayRoute.upnp;
+    }
+    playedUrls.add((encoding ?? urlEncoding).apply(url));
+    return WiimPlayRoute.httpApi;
   }
 
   @override

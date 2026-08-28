@@ -37,6 +37,7 @@ import 'services/qobuz_api.dart';
 import 'services/qobuz_credentials.dart';
 import 'services/spotify_api.dart';
 import 'services/wiim_api.dart';
+import 'services/wiim_upnp.dart';
 import 'services/wiim_credentials.dart';
 import 'state/home_controller.dart';
 import 'state/music_section.dart';
@@ -1186,7 +1187,11 @@ class _MockWiimApi extends WiimApi {
   );
 
   @override
-  Future<void> play(String url, {WiimUrlEncoding? encoding}) async {
+  Future<WiimPlayRoute> play(
+    String url, {
+    WiimTrackMetadata? meta,
+    WiimUrlEncoding? encoding,
+  }) async {
     // URL の末尾の track_id から長さを引く。曲ごとに尺が変わって見える。
     final id =
         int.tryParse(RegExp(r'/file/(\d+)\.flac').firstMatch(url)?.group(1) ?? '') ??
@@ -1195,6 +1200,7 @@ class _MockWiimApi extends WiimApi {
     _base = Duration.zero;
     _since = DateTime.now();
     _state = WiimState.play;
+    return WiimPlayRoute.upnp;
   }
 
   @override
