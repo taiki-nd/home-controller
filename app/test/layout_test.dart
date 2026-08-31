@@ -554,7 +554,8 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
 
-    /// レール（幅 452 の箱）と、その中の進捗バーの位置。
+    /// レール（幅 452 の箱）と、その中のいちばん上の中身（タブ）の位置。
+    /// 進捗バーは下端に貼りついていて帯では動かないので、天のものを見る。
     Future<(Rect, Rect)> layoutWith(double topInset) async {
       final controller = await buildController(tester, playing: true);
       await tester.pumpWidget(
@@ -577,18 +578,56 @@ void main() {
         tester.getRect(
           find.byWidgetPredicate((w) => w is SizedBox && w.width == 452),
         ),
-        tester.getRect(find.byType(ProgressRow)),
+        tester.getRect(find.byType(RailTabs)),
       );
     }
 
-    final (railFlush, progressFlush) = await layoutWith(0);
-    final (rail, progress) = await layoutWith(inset);
+    final (railFlush, tabsFlush) = await layoutWith(0);
+    final (rail, tabs) = await layoutWith(inset);
 
     // 面は帯を含めて画面いっぱい。上端が下がると帯が塗れない。
     expect(railFlush.top, 0);
     expect(rail, railFlush);
     // 中身だけ帯のぶん下がる（余白の実値には依存させない）。
-    expect(progress.top - progressFlush.top, inset);
+    expect(tabs.top - tabsFlush.top, inset);
+  });
+
+  // 再生操作はレールのいちばん下。上に置くと、腕を上げないと押せない。
+  testWidgets('iPad: 進捗とトランスポートはレールの下端にある', (tester) async {
+    tester.view.physicalSize = ipad;
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final controller = await buildController(tester, playing: true);
+    await tester.pumpWidget(
+      wrap(
+        TabletLayout(
+          controller: controller,
+          newReleases: _idleReleases(),
+          onPlayNow: (_) {},
+          onPlayPlaylist: (_) {},
+          onPlayRelease: (_) {},
+          onRemoveFromPlaylist: (_, _) {},
+          attribution: const SizedBox.shrink(),
+          topInset: 24,
+        ),
+        ipad,
+      ),
+    );
+    await tester.pump();
+
+    final rail = tester.getRect(
+      find.byWidgetPredicate((w) => w is SizedBox && w.width == 452),
+    );
+    final tabs = tester.getRect(find.byType(RailTabs));
+    final progress = tester.getRect(find.byType(ProgressRow));
+    final transport = tester.getRect(find.byType(TransportControls));
+
+    // タブ → パネル → 進捗 → トランスポート、の順。
+    expect(tabs.bottom, lessThan(progress.top));
+    expect(progress.bottom, lessThanOrEqualTo(transport.top));
+    // 操作の段はレールの底に貼りついている（下は余白ぶんだけ）。
+    expect(rail.bottom - transport.bottom, lessThan(40));
   });
 
   testWidgets('停止中(204)は「停止中」の状態表示になる', (tester) async {
