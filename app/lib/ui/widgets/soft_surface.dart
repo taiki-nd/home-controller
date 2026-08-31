@@ -49,8 +49,8 @@ class SoftSurface extends StatelessWidget {
   /// 往復 1 周にかける時間。
   final Duration cycle;
 
-  /// 繋ぎに使う既定の距離。両隣の中身に掛かるので、境目の余白（レール左は
-  /// 40/24、レール内の横の仕切りは 15/16）に収まる範囲でいちばん広く取る。
+  /// 繋ぎに使う既定の距離。両隣の中身に掛かるので、境目の余白（レール内の
+  /// 横の仕切りは 15/16）に収まる範囲でいちばん広く取る。
   static const defaultRamp = 26.0;
   static const defaultDrift = 10.0;
 

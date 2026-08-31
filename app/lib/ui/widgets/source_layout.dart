@@ -155,7 +155,7 @@ class PhoneNowPlaying extends StatelessWidget {
   }
 }
 
-/// iPad の左半分。大判アートワークとメタ 1 行 + 特大の曲名。
+/// iPad の左半分。大判アートワークと特大の曲名 + メタ 1 行。
 class TabletNowPlaying extends StatelessWidget {
   const TabletNowPlaying({
     super.key,
@@ -213,6 +213,18 @@ class TabletNowPlaying extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 20),
+              // 2 行ぶんの高さが曲によらず一定になるので、上の Expanded の
+              // 取り分＝アートワークの位置も動かない。
+              MarqueeText(
+                title,
+                style: AppText.body(
+                  50,
+                  weight: FontWeight.w900,
+                  height: 1.04,
+                  letterSpacing: -1.5,
+                ),
+              ),
+              const SizedBox(height: 10),
               Row(
                 children: [
                   Expanded(
@@ -226,18 +238,6 @@ class TabletNowPlaying extends StatelessWidget {
                     metaTrailing!,
                   ],
                 ],
-              ),
-              const SizedBox(height: 10),
-              // 2 行ぶんの高さが曲によらず一定になるので、上の Expanded の
-              // 取り分＝アートワークの位置も動かない。
-              MarqueeText(
-                title,
-                style: AppText.body(
-                  50,
-                  weight: FontWeight.w900,
-                  height: 1.04,
-                  letterSpacing: -1.5,
-                ),
               ),
             ],
           ),
@@ -288,8 +288,12 @@ class SourceArtwork extends StatelessWidget {
 
 /// iPad の右レール（幅は呼ぶ側が決める）。
 ///
-/// 上から: 進捗＋トランスポートの段 → タブ → パネル。段の仕切りは線ではなく、
-/// わずかに持ち上げた面が下とレールの左へ溶けていく形。
+/// 上から: タブ → パネル → 進捗＋トランスポートの段。操作はいちばん下、
+/// 親指の届くところにまとめる。段の仕切りは線ではなく、わずかに持ち上げた面が
+/// 上へ溶けていく形。
+///
+/// レールの左端は溶かさない。左ペインのグラデがそこで一度途切れて見えるので、
+/// 面はまっすぐ切る（要望どおり。壁掛けの焼きつきについては下の注記）。
 class SourceRail extends StatelessWidget {
   const SourceRail({
     super.key,
@@ -320,19 +324,39 @@ class SourceRail extends StatelessWidget {
     return ClipRect(
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 26, sigmaY: 26),
-        // 左端は線で仕切らず、レールの色そのものを左の面へ繋ぐ。
-        child: SoftSurface(
+        // 左端はまっすぐ切る。ここを溶かすと、左ペインのグラデがレールの手前で
+        // 一段暗くなってから面に変わるので、境目が「にじんだ帯」として見える。
+        //
+        // 焼きつき対策はこの辺を動かすことで効かせていたが、境目にあるのは
+        // 1px の線ではなく幅 452 の面の縁なので、面の内側（段の仕切り）だけ
+        // 溶かしておけば、輝度一定の細い線は画面に残らない。
+        child: ColoredBox(
           color: AppColors.bg.withValues(alpha: 0.72),
-          edges: const [AxisDirection.left],
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // 下の余白 15 = 元の 14 + 線 1px ぶん。中身の位置は動かない。
+              Padding(
+                padding: EdgeInsets.fromLTRB(24, topInset + 20, 24, 14),
+                child: tabs,
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 4, 24, 16),
+                  child: panel,
+                ),
+              ),
+              // 操作の段。上の余白 15 = 元の 14 + 線 1px ぶん。
+              // 下はホームインジケータのぶんを足す（レールは画面下端に接する）。
               SoftSurface(
                 color: AppColors.surface.withValues(alpha: 0.55),
-                edges: const [AxisDirection.down, AxisDirection.left],
+                edges: const [AxisDirection.up],
                 child: Padding(
-                  padding: EdgeInsets.fromLTRB(24, topInset + 20, 24, 15),
+                  padding: EdgeInsets.fromLTRB(
+                    24,
+                    15,
+                    24,
+                    20 + MediaQuery.paddingOf(context).bottom,
+                  ),
                   child: Column(
                     children: [
                       ProgressRow(controller: controller, onSeek: onSeek),
@@ -340,16 +364,6 @@ class SourceRail extends StatelessWidget {
                       transport,
                     ],
                   ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(24, 16, 24, 14),
-                child: tabs,
-              ),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
-                  child: panel,
                 ),
               ),
             ],
