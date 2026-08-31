@@ -195,6 +195,20 @@ jobs:
             --dart-define=ENABLE_MUSIC=${{ steps.flags.outputs.enable_music }} \
             --dart-define=SPOTIFY_CLIENT_ID=${{ secrets.SPOTIFY_CLIENT_ID }}
 
+      # QOBUZ を落とすビルドから `UIBackgroundModes: audio` を抜く（issue #8）。
+      #
+      # **公開ビルドに残すと審査で刺さる。** この宣言は「別のアプリを開いても
+      # キューを進める」ために無音を鳴らし続ける仕掛け（PlaybackKeepAlive）
+      # 用で、ENABLE_MUSIC=false のビルドには QOBUZ 自体が入らないから、
+      # 音を出さないアプリが audio を宣言しているだけの状態になる。
+      # Info.plist の配列は xcconfig で条件分岐できないので、ここで抜く。
+      - name: Drop background audio mode from the public build
+        if: steps.flags.outputs.enable_music != 'true'
+        run: |
+          /usr/libexec/PlistBuddy -c "Delete :UIBackgroundModes" \
+            app/ios/Runner/Info.plist
+          echo "::notice::UIBackgroundModes を外しました (公開ビルド)"
+
       - name: pod install
         working-directory: app/ios
         run: pod install

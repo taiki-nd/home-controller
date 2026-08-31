@@ -75,6 +75,20 @@
 	     SSDP / mDNS は使わず multicast エンタイトルメントも要らない。 -->
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>WiiM プレーヤーを操作するためにローカルネットワークへアクセスします</string>
+	<!-- **別のアプリを開いている間もキューを進めるために要る**（issue #8）。
+	     音を出しているのは WiiM で、このアプリ自身は無音を鳴らし続けるだけ
+	     （ios/Runner/PlaybackKeepAlive.swift）。iOS には「LAN の機器を
+	     見張り続ける」バックグラウンドモードが無く、fetch / processing は
+	     起こされる間隔が曲の切れ目に全く合わないので、実用になるのは audio
+	     だけ。docs/qobuz-wiim-integration.md §5.3。
+	     **公開ビルド (ios-v*, ENABLE_MUSIC=false) には残さない。** そちらには
+	     QOBUZ 自体が入らないので、音を出さないアプリが audio を宣言している
+	     だけになり審査で刺さる。CI が Info.plist からこのキーを抜く
+	     （.github/workflows/ios-testflight.yml、docs/release-strategy.md §3）。 -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
 	<!-- HTTPS(TLS) しか使っておらず輸出規制の申告対象外。
 	     これが無いと TestFlight にビルドが出るたびに手動回答を求められる。 -->
 	<key>ITSAppUsesNonExemptEncryption</key>

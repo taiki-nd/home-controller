@@ -167,4 +167,95 @@ void main() {
     expect(wiim.playedUrls.single, contains('/file/1.flac'));
     expect(controller.errorBanner, isNull);
   });
+
+  /// 無音キープアライブ（issue #8）。
+  ///
+  /// **iOS はバックグラウンドのアプリを数十秒で suspend する。** 生き残るには
+  /// `UIBackgroundModes: audio` が要り、そのために無音を鳴らし続ける。
+  /// ここで固定するのは「いつ掴んで、いつ手放すか」。音声セッションを掴みっ
+  /// ぱなしにすると他のアプリに迷惑がかかる。
+  group('無音キープアライブ', () {
+    test('鳴っている状態で背面に回ると掴む', () async {
+      final (controller, _, wiim, keepAlive) = await startedWithKeepAlive();
+      addTearDown(controller.dispose);
+
+      await controller.enqueueTracks([track(1), track(2)]);
+      wiim.current = playingStatus(title: '曲 1');
+      await pollOnce();
+
+      controller.setForeground(false);
+      await pumpEventQueue();
+
+      expect(keepAlive.isActive, isTrue);
+    });
+
+    test('止まっているなら掴まない（他のアプリに譲る）', () async {
+      final (controller, _, _, keepAlive) = await startedWithKeepAlive();
+      addTearDown(controller.dispose);
+
+      // 何も積んでいない＝鳴らすものが無い。
+      controller.setForeground(false);
+      await pumpEventQueue();
+
+      expect(keepAlive.isActive, isFalse);
+      expect(keepAlive.starts, 0);
+    });
+
+    test('前面に戻ったら手放す', () async {
+      final (controller, _, wiim, keepAlive) = await startedWithKeepAlive();
+      addTearDown(controller.dispose);
+
+      await controller.enqueueTracks([track(1), track(2)]);
+      wiim.current = playingStatus(title: '曲 1');
+      await pollOnce();
+      controller.setForeground(false);
+      await pumpEventQueue();
+      controller.setForeground(true);
+      await pumpEventQueue();
+
+      expect(keepAlive.isActive, isFalse);
+      expect(keepAlive.stops, greaterThan(0));
+    });
+
+    test('背面でキューが尽きたら手放す', () async {
+      final (controller, _, wiim, keepAlive) = await startedWithKeepAlive();
+      addTearDown(controller.dispose);
+
+      await controller.enqueueTracks([track(1)]);
+      wiim.current = playingStatus(title: '曲 1');
+      await pollOnce();
+      controller.setForeground(false);
+      await pumpEventQueue();
+      expect(keepAlive.isActive, isTrue);
+
+      // 最後の 1 曲が終わった。リピート off なので次は無い。
+      wiim.current = idleStatus(title: '曲 1');
+      await Future<void>.delayed(QobuzController.pollWhileBackground);
+      await pumpEventQueue();
+
+      // **鳴らすものが尽きたら降りる。** 掴んだままだと電池を食い続ける。
+      expect(keepAlive.isActive, isFalse);
+    });
+
+    test('背面でもポーリングを畳まない（間隔だけ落とす）', () async {
+      final (controller, _, wiim, _) = await startedWithKeepAlive();
+      addTearDown(controller.dispose);
+
+      await controller.enqueueTracks([track(1), track(2), track(3)]);
+      wiim.current = playingStatus(title: '曲 1');
+      await pollOnce();
+
+      controller.setForeground(false);
+      await pumpEventQueue();
+      // 背面にいる間に、預けてあった 2 曲目へ本体が移った。
+      wiim.current = playingStatus(title: '曲 2');
+      await Future<void>.delayed(QobuzController.pollWhileBackground);
+      await pumpEventQueue();
+
+      // 見張り続けているので、前面に戻る前に拾えている。
+      expect(controller.currentTrack?.id, 2);
+      // そして次の 1 曲もその場で預け直す。**ここが繋がると止まらなくなる。**
+      expect(wiim.preloadedUrls.last, contains('/file/3.flac'));
+    });
+  });
 }

@@ -8,6 +8,7 @@ import '../models/wiim_models.dart';
 import '../services/qobuz_api.dart';
 import '../services/qobuz_bundle.dart';
 import '../services/qobuz_credentials.dart';
+import '../services/playback_keepalive.dart';
 import '../services/qobuz_web_login.dart';
 import '../services/wiim_api.dart';
 import '../services/wiim_credentials.dart';
@@ -109,16 +110,25 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
     QobuzApi? api,
     WiimApi? wiim,
     WiimDiscovery? discovery,
+    PlaybackKeepAlive? keepAlive,
   }) : _credentials = credentials ?? QobuzCredentials(),
        _wiimCredentials = wiimCredentials ?? WiimCredentials(),
        _api = api ?? QobuzApi(),
        _wiim = wiim ?? WiimApi(),
-       _discovery = discovery ?? WiimDiscovery();
+       _discovery = discovery ?? WiimDiscovery(),
+       _keepAlive = keepAlive ?? PlaybackKeepAlive();
 
   /// 再生中と停止中でポーリング間隔を変える（§7 M2）。
   /// 壁掛けでシークバーが動いて見えるのは再生中だけでよい。
   static const pollWhilePlaying = Duration(seconds: 1);
   static const pollWhileIdle = Duration(seconds: 5);
+
+  /// バックグラウンドでの間隔（issue #8）。
+  ///
+  /// **シークバーを動かす必要が無い。** 誰も見ていないので、やることは
+  /// 「本体がどこまで進んだか見て、次の 1 曲を預け直す」だけ。曲の長さに
+  /// 対して 10 秒は十分細かい。
+  static const pollWhileBackground = Duration(seconds: 10);
 
   /// 繋がらないときの間隔。頭打ちまで倍々。
   static const _retryMin = Duration(seconds: 2);
@@ -142,6 +152,7 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
   final QobuzApi _api;
   final WiimApi _wiim;
   final WiimDiscovery _discovery;
+  final PlaybackKeepAlive _keepAlive;
 
   QobuzAppConfig? _app;
   QobuzAccount? _account;
@@ -347,19 +358,26 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
     await _connect();
   }
 
-  /// バックグラウンドではポーリングしない。
+  /// 前面／背面が入れ替わった。
   ///
-  /// **止めても再生は続く。** 次の 1 曲は先に本体へ預けてあるので（[_armed]）、
-  /// 誰も見ていない間に曲が終わっても本体が自力で移る。前面に戻ったら
-  /// [_absorbAutoAdvance] が「どこまで進んだか」を拾って辻褄を合わせる。
+  /// **背面でも見張り続ける**（issue #8）。別のアプリを開いた瞬間にキューが
+  /// 止まっていたのは、ここでポーリングを畳んでいたから——ではなく、iOS が
+  /// アプリごと suspend していたから。鳴っている間だけ [PlaybackKeepAlive] で
+  /// 生き延びて、間隔を [pollWhileBackground] まで落として見張る。
+  ///
+  /// 仮に suspend されても、次の 1 曲は本体に預けてある（[_armed]）ので
+  /// そこまでは繋がる。前面に戻れば [_absorbAutoAdvance] が辻褄を合わせる。
   void setForeground(bool value) {
     if (_foreground == value) return;
     _foreground = value;
     if (value) {
+      unawaited(_keepAlive.stop());
       if (_status != QobuzStatus.needsSetup) _connect();
     } else {
-      _poll?.cancel();
-      _poll = null;
+      // **止まっているのに音声セッションを掴まない。** 他のアプリに対しても
+      // 失礼だし、鳴っていないなら進める先も無い。
+      if (isPlaying) unawaited(_keepAlive.start());
+      _schedulePoll();
     }
   }
 
@@ -722,7 +740,7 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
   }
 
   void _scheduleRetry() {
-    if (!_foreground || _disposed) return;
+    if (_disposed) return;
     _poll?.cancel();
     _poll = Timer(_backoff, _connect);
     final next = _backoff * 2;
@@ -730,13 +748,19 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
   }
 
   void _schedulePoll() {
-    if (!_foreground || _disposed) return;
+    if (_disposed) return;
     _poll?.cancel();
-    _poll = Timer(isPlaying ? pollWhilePlaying : pollWhileIdle, _tick);
+    _poll = Timer(_pollInterval, _tick);
+  }
+
+  /// 次に引き直すまでの間。**背面では落とす**（issue #8）。
+  Duration get _pollInterval {
+    if (!_foreground) return pollWhileBackground;
+    return isPlaying ? pollWhilePlaying : pollWhileIdle;
   }
 
   Future<void> _tick() async {
-    if (_disposed || !_foreground) return;
+    if (_disposed) return;
     try {
       final status = await _wiim.status();
       if (_disposed) return;
@@ -1131,6 +1155,8 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
       notifyListeners();
       // 預けたものが残っていれば消す。ここは止まるところ。
       _rearm();
+      // **鳴らすものが尽きたら降りる。** 背面で生き延び続ける理由が無い。
+      unawaited(_keepAlive.stop());
       return;
     }
     notifyListeners();
@@ -1443,6 +1469,7 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
   @override
   void dispose() {
     _disposed = true;
+    unawaited(_keepAlive.stop());
     _poll?.cancel();
     _searchTimer?.cancel();
     _toastTimer?.cancel();

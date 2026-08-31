@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:spotify_remote/models/qobuz_models.dart';
 import 'package:spotify_remote/models/wiim_models.dart';
+import 'package:spotify_remote/services/playback_keepalive.dart';
 import 'package:spotify_remote/services/qobuz_api.dart';
 import 'package:spotify_remote/services/qobuz_credentials.dart';
 import 'package:spotify_remote/services/wiim_api.dart';
@@ -247,6 +248,28 @@ class FakeWiimApi extends WiimApi {
   void close() {}
 }
 
+/// 無音キープアライブの偽物（issue #8）。**実機の音声セッションは触らない。**
+class FakePlaybackKeepAlive extends PlaybackKeepAlive {
+  int starts = 0;
+  int stops = 0;
+  bool running = false;
+
+  @override
+  bool get isActive => running;
+
+  @override
+  Future<void> start() async {
+    starts += 1;
+    running = true;
+  }
+
+  @override
+  Future<void> stop() async {
+    stops += 1;
+    running = false;
+  }
+}
+
 WiimStatus idleStatus({String? title}) => WiimStatus(
   state: WiimState.stop,
   position: Duration.zero,
@@ -296,15 +319,24 @@ QobuzTrack track(
 
 /// 繋がった [QobuzController] と偽物を返す。
 Future<(QobuzController, FakeQobuzApi, FakeWiimApi)> started() async {
+  final (controller, api, wiim, _) = await startedWithKeepAlive();
+  return (controller, api, wiim);
+}
+
+/// キープアライブの偽物まで受け取りたいとき（issue #8）。
+Future<(QobuzController, FakeQobuzApi, FakeWiimApi, FakePlaybackKeepAlive)>
+startedWithKeepAlive() async {
   final api = FakeQobuzApi();
   final wiim = FakeWiimApi();
+  final keepAlive = FakePlaybackKeepAlive();
   final controller = QobuzController(
     credentials: FakeQobuzCredentials(),
     wiimCredentials: FakeWiimCredentials(),
     api: api,
     wiim: wiim,
+    keepAlive: keepAlive,
   );
   await controller.start();
   await pumpEventQueue();
-  return (controller, api, wiim);
+  return (controller, api, wiim, keepAlive);
 }
