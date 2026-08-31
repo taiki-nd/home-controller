@@ -1,5 +1,29 @@
+import 'dart:typed_data';
+
+import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:spotify_remote/services/wiim_credentials.dart';
 import 'package:spotify_remote/services/wiim_upnp.dart';
+
+/// 投げた SOAP をそのまま取っておく口。
+class _Capture implements HttpClientAdapter {
+  final bodies = <String>[];
+  final actions = <String>[];
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    bodies.add(options.data as String);
+    actions.add(options.headers['SOAPACTION'] as String);
+    return ResponseBody.fromString('', 200);
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
 
 /// WiiM 本体のディスプレイに出す見出しの組み立て
 /// （`docs/qobuz-wiim-integration.md` §5.5）。
@@ -87,5 +111,63 @@ void main() {
     expect(didl.contains('duration='), isFalse);
     // mime が分からないときは FLAC 前提で置く（hi-res 用途なので）。
     expect(didl, contains('audio/flac'));
+  });
+
+  /// 次の 1 曲の預け方（issue #8）。
+  ///
+  /// **引数名は `SetAVTransportURI` と違う。** あちらは `CurrentURI` /
+  /// `CurrentURIMetaData`、こちらは `NextURI` / `NextURIMetaData`。実機の
+  /// `rendertransportSCPD.xml` がそう宣言していて、綴りを間違えると 402
+  /// (Invalid Args) で黙って落ちる。
+  group('SetNextAVTransportURI', () {
+    ({WiimUpnp upnp, _Capture http}) subject() {
+      final http = _Capture();
+      final dio = Dio()..httpClientAdapter = http;
+      final upnp = WiimUpnp(
+        connection: const WiimConnection(host: '192.168.1.42'),
+        dio: dio,
+      );
+      return (upnp: upnp, http: http);
+    }
+
+    test('NextURI と NextURIMetaData で送る', () async {
+      final s = subject();
+
+      await s.upnp.setNext(
+        signedUrl,
+        const WiimTrackMetadata(title: 'Clair de Lune', artist: 'Debussy'),
+      );
+
+      expect(
+        s.http.actions.single,
+        '"urn:schemas-upnp-org:service:AVTransport:1#SetNextAVTransportURI"',
+      );
+      final body = s.http.bodies.single;
+      expect(body, contains('<NextURI>'));
+      expect(body, contains('<NextURIMetaData>'));
+      // `CurrentURI` と取り違えていない。
+      expect(body.contains('CurrentURI'), isFalse);
+      // DIDL は SOAP の中で 2 重にエスケープされる（§5.5）。
+      expect(body, contains('uid=1&amp;amp;eid=2'));
+      expect(body, contains('&lt;dc:title&gt;Clair de Lune&lt;/dc:title&gt;'));
+    });
+
+    test('取り下げは空の NextURI を送る', () async {
+      final s = subject();
+
+      await s.upnp.clearNext();
+
+      expect(s.http.bodies.single, contains('<NextURI></NextURI>'));
+    });
+
+    test('Play は送らない（いま鳴っているものに触らない）', () async {
+      final s = subject();
+
+      await s.upnp.setNext(signedUrl, const WiimTrackMetadata(title: 'x'));
+
+      // **予約するだけ。** ここで Play を送ると、いま鳴っている曲を止めて
+      // 頭から鳴らし直してしまう。
+      expect(s.http.actions.length, 1);
+    });
   });
 }

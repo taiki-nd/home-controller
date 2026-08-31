@@ -84,6 +84,31 @@ class WiimUpnp {
     await _action('Play', '<InstanceID>0</InstanceID><Speed>1</Speed>');
   }
 
+  /// **次の 1 曲を本体に預ける**（issue #8）。
+  ///
+  /// アプリが前面から外れるとポーリングが止まり、曲の終わりを誰も見ていない。
+  /// 「終わったのを見て次を送る」だけだと、別のアプリを開いた瞬間にキューが
+  /// そこで止まる。先に渡しておけば、**アプリが眠っていても本体が自力で
+  /// 次へ移る。**
+  ///
+  /// 引数名は `NextURI` / `NextURIMetaData`（`SetAVTransportURI` の
+  /// `CurrentURI` と綴りが違う）。実機の `rendertransportSCPD.xml` に合わせた。
+  Future<void> setNext(String url, WiimTrackMetadata meta) => _action(
+    'SetNextAVTransportURI',
+    '<InstanceID>0</InstanceID>'
+    '<NextURI>${escapeXml(url)}</NextURI>'
+    '<NextURIMetaData>${escapeXml(buildDidl(url, meta))}</NextURIMetaData>',
+  );
+
+  /// 預けたものを取り下げる。
+  ///
+  /// **キューの最後まで来たら必ず呼ぶ。** 空にしないと、前の曲のときに預けた
+  /// URL が残っていて、止まるはずのところで 1 曲余計に鳴る。
+  Future<void> clearNext() => _action(
+    'SetNextAVTransportURI',
+    '<InstanceID>0</InstanceID><NextURI></NextURI><NextURIMetaData></NextURIMetaData>',
+  );
+
   /// DIDL-Lite を組む。
   ///
   /// **空の要素は出さない。** 空文字を渡すと WiiM 側は `unknow` を返し、

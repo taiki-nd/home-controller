@@ -114,6 +114,13 @@ workflow のコメントには `ios-test-v*` は「反復用。中身は同じ�
 - 公開版は `ENABLE_MUSIC=false` の**別ビルド**。同じバイナリではないので、
   審査対象に Spotify 機能が含まれない
 
+**`UIBackgroundModes: audio` も同じ扱いにする**（issue #8）。QOBUZ で別のアプリを
+開いてもキューを進めるために無音を鳴らし続けているが、`ENABLE_MUSIC=false` の
+ビルドには QOBUZ 自体が入らない。**音を出さないアプリが audio を宣言している
+だけの状態は審査で刺さる**ので、CI が公開ビルドの Info.plist からこのキーを
+`PlistBuddy -c Delete` で抜く（`Drop background audio mode from the public build`）。
+Info.plist の配列は xcconfig で条件分岐できないため、ビルド前の一手で処理している。
+
 ### CI の変更
 
 ```yaml

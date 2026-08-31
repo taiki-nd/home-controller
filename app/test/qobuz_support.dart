@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:spotify_remote/models/qobuz_models.dart';
 import 'package:spotify_remote/models/wiim_models.dart';
+import 'package:spotify_remote/services/playback_keepalive.dart';
 import 'package:spotify_remote/services/qobuz_api.dart';
 import 'package:spotify_remote/services/qobuz_credentials.dart';
 import 'package:spotify_remote/services/wiim_api.dart';
@@ -199,6 +200,31 @@ class FakeWiimApi extends WiimApi {
     return WiimPlayRoute.httpApi;
   }
 
+  /// 本体に預けた「次の 1 曲」の URL を順に。**空文字は取り下げ。**
+  final preloadedUrls = <String>[];
+  final preloadedMeta = <WiimTrackMetadata>[];
+
+  @override
+  Future<bool> preloadNext(
+    String url,
+    WiimTrackMetadata meta, {
+    DateTime? now,
+  }) async {
+    // UPnP でしかできないので、落ちている個体では預けられない。
+    if (!upnpAvailable) return false;
+    preloadedUrls.add(url);
+    preloadedMeta.add(meta);
+    commands.add('preload');
+    return true;
+  }
+
+  @override
+  Future<void> clearNext({DateTime? now}) async {
+    if (!upnpAvailable) return;
+    preloadedUrls.add('');
+    commands.add('clearNext');
+  }
+
   @override
   Future<void> pause() async => commands.add('pause');
 
@@ -222,24 +248,51 @@ class FakeWiimApi extends WiimApi {
   void close() {}
 }
 
-WiimStatus idleStatus() => WiimStatus(
+/// 無音キープアライブの偽物（issue #8）。**実機の音声セッションは触らない。**
+class FakePlaybackKeepAlive extends PlaybackKeepAlive {
+  int starts = 0;
+  int stops = 0;
+  bool running = false;
+
+  @override
+  bool get isActive => running;
+
+  @override
+  Future<void> start() async {
+    starts += 1;
+    running = true;
+  }
+
+  @override
+  Future<void> stop() async {
+    stops += 1;
+    running = false;
+  }
+}
+
+WiimStatus idleStatus({String? title}) => WiimStatus(
   state: WiimState.stop,
   position: Duration.zero,
   duration: Duration.zero,
   volume: 40,
   muted: false,
+  title: title,
   receivedAt: DateTime.now(),
 );
 
+/// [title] は本体が返す曲名。**DIDL で渡した `dc:title` がそのまま返る**ので、
+/// 「預けた曲に移ったか」の判定（`_absorbAutoAdvance`）を組むのに使う。
 WiimStatus playingStatus({
   Duration position = const Duration(seconds: 5),
   Duration duration = const Duration(minutes: 4),
+  String? title,
 }) => WiimStatus(
   state: WiimState.play,
   position: position,
   duration: duration,
   volume: 40,
   muted: false,
+  title: title,
   receivedAt: DateTime.now(),
 );
 
@@ -266,15 +319,24 @@ QobuzTrack track(
 
 /// 繋がった [QobuzController] と偽物を返す。
 Future<(QobuzController, FakeQobuzApi, FakeWiimApi)> started() async {
+  final (controller, api, wiim, _) = await startedWithKeepAlive();
+  return (controller, api, wiim);
+}
+
+/// キープアライブの偽物まで受け取りたいとき（issue #8）。
+Future<(QobuzController, FakeQobuzApi, FakeWiimApi, FakePlaybackKeepAlive)>
+startedWithKeepAlive() async {
   final api = FakeQobuzApi();
   final wiim = FakeWiimApi();
+  final keepAlive = FakePlaybackKeepAlive();
   final controller = QobuzController(
     credentials: FakeQobuzCredentials(),
     wiimCredentials: FakeWiimCredentials(),
     api: api,
     wiim: wiim,
+    keepAlive: keepAlive,
   );
   await controller.start();
   await pumpEventQueue();
-  return (controller, api, wiim);
+  return (controller, api, wiim, keepAlive);
 }

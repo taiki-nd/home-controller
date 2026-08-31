@@ -12,5 +12,9 @@ import UIKit
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    // 自前のものは生成物（GeneratedPluginRegistrant）に載らないので手で足す。
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "PlaybackKeepAlive") {
+      PlaybackKeepAlive.register(with: registrar)
+    }
   }
 }
