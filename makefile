@@ -103,10 +103,13 @@ ios-test-retag-%: ## ios-test-vX.Y.Z を打ち直して CI 再実行
 #   例: make ios-ship SPOTIFY_CLIENT_ID=xxxx ASC_ISSUER_ID=xxxx BUILD_NUMBER=2
 # ---------------------------------------------------------------------------
 
+# pod install は LANG が C のままだと installation_root の unicode_normalize で
+# Encoding::CompatibilityError になって落ちる。GUI から起動した shell では
+# LANG が渡ってこないことがあるので、ここで明示する。
 ios-build: ## Generated.xcconfig と Pods を用意する
 	cd app && flutter build ios --release --config-only \
 		--build-name=$(BUILD_NAME) --build-number=$(BUILD_NUMBER) $(DART_DEFINES)
-	cd app/ios && pod install
+	cd app/ios && LANG=en_US.UTF-8 pod install
 
 ios-archive: ios-build ## Runner.xcarchive を作る（手動署名）
 	cd app && rm -rf build/Runner.xcarchive && xcodebuild archive \
