@@ -80,6 +80,68 @@ void main() {
       });
     }
   });
+
+  group('タブ', () {
+    /// 見えているタブの文言を左から順に。IndexedStack で隠れているほうの
+    /// 音源は既定で拾わないので、これで「今出ている音源のタブ」になる。
+    List<String> labels(WidgetTester tester) => tester
+        .widgetList<TabButton>(find.byType(TabButton))
+        .map((tab) => tab.label)
+        .toList();
+
+    /// スマホはシートを開かないとタブが組まれない。掴みしろを叩いて開ける。
+    Future<void> openSheet(WidgetTester tester) async {
+      // Drawer が閉じきるまで待つ。残っているとバリアが叩きを吸う。
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(const Duration(milliseconds: 400));
+      drain(tester);
+
+      final sheet = tester.getRect(find.byType(SourceSheet));
+      await tester.tapAt(sheet.topCenter + const Offset(0, 15));
+      // 1 回目で open が立ち、2 回目でシートが伸びきる。伸びきるまでは中身が
+      // 収まらないので、1 行プレビューのままタブは組まれない。
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      drain(tester);
+    }
+
+    testWidgets('iPad: 文言も並びも音源で変わらない', (tester) async {
+      await setSurface(tester, ipad);
+
+      await open(tester, 'SPOTIFY');
+      expect(find.byType(SegmentedTabs), findsOneWidget);
+      final music = labels(tester);
+      await settle(tester);
+
+      await open(tester, 'QOBUZ');
+      expect(find.byType(SegmentedTabs), findsOneWidget);
+      final qobuz = labels(tester);
+      await settle(tester);
+
+      expect(music, ['Up next', 'Library', 'Add tracks', 'New']);
+      // QOBUZ に New は無い。**抜けるのはそれだけで、残りは 1 語も並びも同じ。**
+      expect(qobuz, music.where((label) => label != 'New').toList());
+    });
+
+    testWidgets('iPhone: 短い文言になるが、揃っているのは同じ', (tester) async {
+      await setSurface(tester, iphone);
+
+      await open(tester, 'SPOTIFY');
+      await openSheet(tester);
+      final music = labels(tester);
+      await settle(tester);
+
+      await open(tester, 'QOBUZ');
+      await openSheet(tester);
+      final qobuz = labels(tester);
+      await settle(tester);
+
+      // 4 つ並べる幅がないので Library / Add tracks だけ短くする。
+      expect(music, ['Up next', 'Lists', 'Add', 'New']);
+      // **片方だけ短くしない。** iPad と違って QOBUZ も短いほうに揃える。
+      expect(qobuz, music.where((label) => label != 'New').toList());
+    });
+  });
 }
 
 /// モックのアートワークは web/mock/*.png を HTTP で読む。テスト環境では必ず

@@ -35,8 +35,9 @@ enum QobuzStatus {
   offline,
 }
 
-/// 下のタブ。
-enum QobuzTab { queue, search, library }
+/// 下のタブ。**宣言順がそのまま表示順**で、music の `RailTab` と同じ並び
+/// （Up next → Library → Add tracks）。New は QOBUZ に無いぶんが抜ける。
+enum QobuzTab { queue, library, search }
 
 /// キューへの積み方。
 enum QobuzQueueOption {
