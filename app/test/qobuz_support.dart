@@ -199,6 +199,31 @@ class FakeWiimApi extends WiimApi {
     return WiimPlayRoute.httpApi;
   }
 
+  /// 本体に預けた「次の 1 曲」の URL を順に。**空文字は取り下げ。**
+  final preloadedUrls = <String>[];
+  final preloadedMeta = <WiimTrackMetadata>[];
+
+  @override
+  Future<bool> preloadNext(
+    String url,
+    WiimTrackMetadata meta, {
+    DateTime? now,
+  }) async {
+    // UPnP でしかできないので、落ちている個体では預けられない。
+    if (!upnpAvailable) return false;
+    preloadedUrls.add(url);
+    preloadedMeta.add(meta);
+    commands.add('preload');
+    return true;
+  }
+
+  @override
+  Future<void> clearNext({DateTime? now}) async {
+    if (!upnpAvailable) return;
+    preloadedUrls.add('');
+    commands.add('clearNext');
+  }
+
   @override
   Future<void> pause() async => commands.add('pause');
 
@@ -222,24 +247,29 @@ class FakeWiimApi extends WiimApi {
   void close() {}
 }
 
-WiimStatus idleStatus() => WiimStatus(
+WiimStatus idleStatus({String? title}) => WiimStatus(
   state: WiimState.stop,
   position: Duration.zero,
   duration: Duration.zero,
   volume: 40,
   muted: false,
+  title: title,
   receivedAt: DateTime.now(),
 );
 
+/// [title] は本体が返す曲名。**DIDL で渡した `dc:title` がそのまま返る**ので、
+/// 「預けた曲に移ったか」の判定（`_absorbAutoAdvance`）を組むのに使う。
 WiimStatus playingStatus({
   Duration position = const Duration(seconds: 5),
   Duration duration = const Duration(minutes: 4),
+  String? title,
 }) => WiimStatus(
   state: WiimState.play,
   position: position,
   duration: duration,
   volume: 40,
   muted: false,
+  title: title,
   receivedAt: DateTime.now(),
 );
 

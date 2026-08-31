@@ -136,6 +136,40 @@ class WiimApi {
     return WiimPlayRoute.httpApi;
   }
 
+  /// 次の 1 曲を本体に預ける（issue #8）。預けられたら true。
+  ///
+  /// **UPnP でしかできない。** HTTP API の `setPlayerCmd:play` は「いま鳴らす」
+  /// しか無いので、その経路に落ちている間は諦めて false を返す。
+  ///
+  /// **失敗しても [upnpDenied] は立てない。** ここは付加価値の best-effort で、
+  /// 本命の [play] を巻き込んで本体の画面から曲名を消す方が損が大きい。
+  /// 逆に「もう断られている」ときは 5 秒待たされるだけ無駄なので、
+  /// [_upnpReady] は尊重する。
+  Future<bool> preloadNext(
+    String url,
+    WiimTrackMetadata meta, {
+    DateTime? now,
+  }) async {
+    if (!_upnpReady(now: now)) return false;
+    try {
+      await _upnp.setNext(url, meta);
+      return true;
+    } on WiimUpnpException catch (e) {
+      debugPrint('WiimApi: 次の曲を預けられませんでした（$e）');
+      return false;
+    }
+  }
+
+  /// 預けたものを取り下げる。キューの最後まで来たとき。
+  Future<void> clearNext({DateTime? now}) async {
+    if (!_upnpReady(now: now)) return;
+    try {
+      await _upnp.clearNext();
+    } on WiimUpnpException catch (e) {
+      debugPrint('WiimApi: 預けた次の曲を消せませんでした（$e）');
+    }
+  }
+
   /// UPnP を試してよいか。断られた直後だけ避ける。
   bool _upnpReady({DateTime? now}) {
     final deniedAt = _upnpDeniedAt;

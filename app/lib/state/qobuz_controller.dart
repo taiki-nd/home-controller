@@ -181,6 +181,14 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
   /// いま鳴らしている曲を送った時刻。[_startGrace] の起点。
   DateTime? _startedAt;
 
+  /// **WiiM 本体に預けてある「次の 1 曲」**（issue #8）。預けていなければ null。
+  ///
+  /// 曲の終わりを見て次を送る方式（§5.3 方式 A）は、見ている人——つまり
+  /// ポーリング——が要る。前面から外れるとポーリングは止まるので、別のアプリを
+  /// 開いた瞬間にキューがそこで止まっていた。`SetNextAVTransportURI` で先に
+  /// 渡しておけば、**アプリが眠っていても本体が自力で次へ移る。**
+  QobuzQueueItem? _armed;
+
   /// 送った URL が実際に鳴ったか。**まだなら載せ方を切り替えて試す**（§5.2）。
   bool _encodingConfirmed = false;
 
@@ -340,6 +348,10 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
   }
 
   /// バックグラウンドではポーリングしない。
+  ///
+  /// **止めても再生は続く。** 次の 1 曲は先に本体へ預けてあるので（[_armed]）、
+  /// 誰も見ていない間に曲が終わっても本体が自力で移る。前面に戻ったら
+  /// [_absorbAutoAdvance] が「どこまで進んだか」を拾って辻褄を合わせる。
   void setForeground(bool value) {
     if (_foreground == value) return;
     _foreground = value;
@@ -657,6 +669,7 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
     _api.token = null;
     _queue.clear();
     _index = -1;
+    _armed = null;
     _playlists = const [];
     _favorites = const QobuzFavorites();
     _listing = null;
@@ -733,7 +746,9 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
         _error = null;
         _set(QobuzStatus.connected);
       }
-      _onStatus(previous, status);
+      // **本体が自力で進んだぶんを先に拾う。** ここで辻褄を合わせておかないと、
+      // 直後の [_onStatus] が「知らない曲が鳴っている」状態で終わりを判定する。
+      if (!_absorbAutoAdvance(previous, status)) _onStatus(previous, status);
       // 曲名や音量が変わったときだけ全体を作り直す。それ以外は
       // シークバーだけ動かす。
       if (previous?.state != status.state ||
@@ -751,6 +766,54 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
       return;
     }
     _schedulePoll();
+  }
+
+  /// 預けた曲へ本体が自力で移っていたら、こちらの現在位置を合わせる。
+  ///
+  /// **手を出さない。** もう鳴っているのだから送り直す必要は無く、送れば頭から
+  /// 鳴り直してしまう。やるのは `_index` を進めることと、**さらに次の 1 曲を
+  /// 預け直すこと**だけ。前面に戻った瞬間もこの経路を通る（issue #8）。
+  ///
+  /// 見分けは本体が返す曲名で付ける。DIDL の `dc:title` はこちらが渡した
+  /// [QobuzTrack.displayTitle] そのものなので、預けた曲の名前が返り始めたら
+  /// 移ったということ。**同じ曲を 2 回続けて積んだときは名前で区別が付かない**
+  /// ので、そのときだけ「終端まで行って頭に戻った」動きで見る。
+  bool _absorbAutoAdvance(WiimStatus? previous, WiimStatus status) {
+    final armed = _armed;
+    if (armed == null) return false;
+    final title = status.title;
+    if (title == null || title != armed.track.displayTitle) return false;
+    if (title == currentTrack?.displayTitle && !_wrappedAround(previous, status)) {
+      return false;
+    }
+    final index = _queue.indexWhere((e) => e.id == armed.id);
+    if (index < 0) {
+      // 預けたあとに行ごと消された。もう追えないので忘れる。
+      _armed = null;
+      return false;
+    }
+    _index = index;
+    _armed = null;
+    // **掴み直しの猶予はもう要らない。** 本体が実際に鳴らしている曲なので、
+    // ここから先は普通に終わりを見てよい。
+    _startedAt = DateTime.now().subtract(_startGrace);
+    _encodingConfirmed = true;
+    unawaited(_updatePalette(armed.track.imageUrl));
+    notifyListeners();
+    _rearm();
+    return true;
+  }
+
+  /// 曲の終端まで行って頭から鳴り直したか。
+  ///
+  /// **単なる巻き戻しと区別する。** 人が手でシークしたときも位置は戻るので、
+  /// 「終わり際にいた」ことまで揃って初めて曲が変わったと見る。
+  bool _wrappedAround(WiimStatus? previous, WiimStatus status) {
+    if (previous == null) return false;
+    if (status.position >= previous.position) return false;
+    final total = previous.duration;
+    if (total <= Duration.zero) return false;
+    return previous.position >= total - const Duration(seconds: 20);
   }
 
   /// ポーリング 1 回ぶんの判断。**曲の終わりを見て次を送る。**
@@ -857,11 +920,14 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
     _shuffle = value;
     if (value) _shuffleUpNext();
     notifyListeners();
+    _rearm();
   }
 
   void cycleRepeat() {
     _repeat = _repeat.next;
     notifyListeners();
+    // 繰り返しが変われば「次に鳴るはずの曲」も変わる。預け直す。
+    _rearm();
   }
 
   /// これから鳴る分だけ混ぜる。**鳴っている曲は動かさない。**
@@ -892,6 +958,7 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
     // 鳴っている曲より前を消したら、現在位置も 1 つ手前にずれる。
     if (index < _index) _index -= 1;
     notifyListeners();
+    _rearm();
   }
 
   /// 並べ替え（`ReorderableListView` から）。
@@ -904,6 +971,7 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
     final item = _queue.removeAt(source);
     _queue.insert(source < target ? target - 1 : target, item);
     notifyListeners();
+    _rearm();
   }
 
   void clearQueue() {
@@ -914,6 +982,7 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
       ..addAll([?current]);
     _index = current == null ? -1 : 0;
     notifyListeners();
+    _rearm();
   }
 
   // ── キューに積む ────────────────────────────────────────────────────
@@ -1035,7 +1104,14 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
         option == QobuzQueueOption.play ||
         option == QobuzQueueOption.replace ||
         (!isPlaying && _startedAt == null);
-    if (shouldStart) await _playCurrent();
+    if (shouldStart) {
+      await _playCurrent();
+    } else {
+      // 鳴っているものはそのまま。**ただし「次」は変わったかもしれない**
+      // ので預け直す（末尾に足しただけでも、キューが 1 曲だけだったなら
+      // それが次になる）。
+      _rearm();
+    }
   }
 
   /// 次の曲へ。[manual] なら曲送りボタン、そうでなければ曲が終わった。
@@ -1053,6 +1129,8 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
       // 終わり。**キューは残す**——同じ並びをもう一度鳴らしたいことが多い。
       _startedAt = null;
       notifyListeners();
+      // 預けたものが残っていれば消す。ここは止まるところ。
+      _rearm();
       return;
     }
     notifyListeners();
@@ -1066,6 +1144,9 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
   Future<void> _playCurrent({bool retry = false}) async {
     final item = currentItem;
     if (item == null) return;
+    // これから現在の URI を差し替える。**預けてあるものは一旦忘れる**——
+    // 本体側に残っていても、この後の [_armNext] が上書きするか消しに行く。
+    _armed = null;
     // 背景の色は「いま鳴らすもの」から。**送るのと同じ入口で拾う**ので、
     // どの経路（タップ・曲送り・キュー入れ替え）から来ても取りこぼさない。
     unawaited(_updatePalette(item.track.imageUrl));
@@ -1112,6 +1193,9 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
       _error = null;
       notifyListeners();
       await _refreshSoon();
+      // **鳴らし始めたらすぐ次を預ける。** 前面から外れるのは曲の途中とは
+      // 限らないので、終わり際まで待たない（issue #8）。
+      _rearm();
     } on QobuzAppException catch (e) {
       _error = e.message;
       _set(QobuzStatus.keyFailed);
@@ -1131,6 +1215,75 @@ class QobuzController extends ChangeNotifier implements PlaybackSurface {
       _error = e.message;
       _set(QobuzStatus.offline);
       _scheduleRetry();
+    }
+  }
+
+  /// いまの曲の次に鳴るはずの行。**キューの並びと繰り返しの設定で決まる。**
+  QobuzQueueItem? get _followingItem {
+    if (_queue.isEmpty || _index < 0) return null;
+    // one は「同じ曲をもう一度」。本体に預けるのも同じ曲でよい。
+    if (_repeat == QobuzRepeatMode.one) return currentItem;
+    if (_index + 1 < _queue.length) return _queue[_index + 1];
+    if (_repeat == QobuzRepeatMode.all) return _queue.first;
+    return null;
+  }
+
+  /// 次の 1 曲を預け直す。**待たない。**
+  ///
+  /// キューをいじるたびに呼ぶ（並べ替え・削除・割り込み・繰り返しの切り替え）。
+  /// 署名付き URL を 1 本取りに行くので、画面の操作をこれで止めない。
+  void _rearm() => unawaited(_armNext());
+
+  /// 次の 1 曲を WiiM 本体に預ける（issue #8）。
+  ///
+  /// **失敗は黙って飲む。** 預けられなくても「前面にいる間は今までどおり
+  /// 曲送りできる」に戻るだけで、画面に出すほどの異常ではない。
+  Future<void> _armNext() async {
+    if (_disposed || _wiimConnection == null) return;
+    final target = _followingItem;
+    if (target == null) {
+      // 最後まで来た。**残っている予約を必ず消す**——消さないと、止まるはずの
+      // ところで前に預けた曲がもう 1 曲鳴る。
+      //
+      // **「預けた覚えが無いから省く」はしない。** `SetAVTransportURI` が
+      // 予約まで消すかは機種任せで、こちらからは分からない。空振りの SOAP が
+      // 1 回増えるほうが、余計な 1 曲が鳴るより安い。
+      _armed = null;
+      try {
+        await _wiim.clearNext();
+      } on WiimException catch (e) {
+        debugPrint('QobuzController: 予約を消せませんでした（$e）');
+      }
+      return;
+    }
+    // 預け直す前に手放す。途中で転んだときに「預けてある」と誤解しない。
+    _armed = null;
+    try {
+      final file = await _api.fileUrl(
+        target.track.id,
+        format: QobuzFormat.hires192,
+      );
+      // 取っている間にキューが動いていたら捨てる。
+      if (_disposed || _followingItem?.id != target.id) return;
+      final ok = await _wiim.preloadNext(
+        file.url,
+        WiimTrackMetadata(
+          title: target.track.displayTitle,
+          artist: target.track.artist,
+          album: target.track.albumTitle,
+          artUrl: target.track.imageUrl,
+          duration: target.track.duration,
+          mimeType: file.mimeType,
+        ),
+      );
+      if (_disposed || _followingItem?.id != target.id) return;
+      _armed = ok ? target : null;
+    } on QobuzException catch (e) {
+      // 鳴らせない曲かもしれない。**ここでは何もしない**——実際に順番が回って
+      // きたときに [_playCurrent] が同じ失敗を拾って読み飛ばす。
+      debugPrint('QobuzController: 次の曲を用意できませんでした（$e）');
+    } on WiimException catch (e) {
+      debugPrint('QobuzController: 次の曲を預けられませんでした（$e）');
     }
   }
 

@@ -63,12 +63,16 @@ void main() {
     addTearDown(controller.dispose);
 
     await controller.enqueueTracks([track(1), track(2)]);
+    // 次の 1 曲を預けるのは待たせない作りなので、落ち着くまで回す。
+    await pumpEventQueue();
 
     expect(controller.queue.map((e) => e.track.id), [1, 2]);
     expect(controller.currentTrack?.id, 1);
-    // **署名付き URL は再生直前に 1 曲ぶんだけ取る。** 2 曲目は取らない。
-    expect(api.fileUrlCalls, [1]);
+    // **署名付き URL は先に 2 曲ぶんだけ取る。** 1 曲目は鳴らすため、2 曲目は
+    // 「次の 1 曲」として本体に預けるため（issue #8）。3 曲目以降は取らない。
+    expect(api.fileUrlCalls, [1, 2]);
     expect(wiim.playedUrls.single, contains('/file/1.flac'));
+    expect(wiim.preloadedUrls.single, contains('/file/2.flac'));
   });
 
   test('WiiM 本体に渡す絵は small のまま（アプリ内だけ large を使う）', () async {
@@ -118,14 +122,15 @@ void main() {
   });
 
   test('「再生」はキューを入れ替えて先頭から鳴らす', () async {
-    final (controller, api, _) = await started();
+    final (controller, _, wiim) = await started();
     addTearDown(controller.dispose);
 
     await controller.enqueueTracks([track(1), track(2)]);
     await controller.enqueueTrack(track(5), option: QobuzQueueOption.play);
 
     expect(controller.queue.map((e) => e.track.id), [5]);
-    expect(api.fileUrlCalls, [1, 5]);
+    // 差し替えた先頭を鳴らし直す。**取り直した URL で送る。**
+    expect(wiim.playedUrls.last, contains('/file/5.flac'));
   });
 
   test('鳴らせない曲は積まずに、除外した数を知らせる', () async {
@@ -156,7 +161,7 @@ void main() {
   });
 
   test('ライブラリから選んだリストはキューを置き換えて鳴り出す', () async {
-    final (controller, api, _) = await started();
+    final (controller, _, wiim) = await started();
     addTearDown(controller.dispose);
 
     await controller.enqueueTracks([track(1), track(2)]);
@@ -167,7 +172,7 @@ void main() {
     // **music の `playPlaylist` と同じ**——積み足しではなく差し替え。
     expect(controller.queue.map((e) => e.track.id), [11, 12]);
     expect(controller.currentTrack?.id, 11);
-    expect(api.fileUrlCalls, [1, 11]);
+    expect(wiim.playedUrls.last, contains('/file/11.flac'));
     expect(controller.toast, contains('パーティ 2026 を再生'));
   });
 
@@ -244,7 +249,8 @@ void main() {
     await controller.skipNext();
 
     expect(controller.currentTrack?.id, 2);
-    expect(api.fileUrlCalls, [1, 2]);
+    // 預けてあった 2 曲目を、送る直前にもう一度取り直して鳴らす。
+    expect(api.fileUrlCalls, [1, 2, 2]);
     expect(wiim.playedUrls.last, contains('/file/2.flac'));
   });
 
@@ -322,7 +328,10 @@ void main() {
     await controller.skipPrevious();
 
     expect(controller.currentTrack?.id, 2);
-    expect(api.fileUrlCalls, [1, 2, 2]);
+    // 1 → 2（曲送り）→ 2（頭出し）。**送った回数で見る**——`fileUrl` は
+    // 本体に預けるぶんも呼ぶので、呼び出し数では頭出しを数えられない。
+    expect(wiim.playedUrls.length, 3);
+    expect(wiim.playedUrls.last, contains('/file/2.flac'));
   });
 
   test('曲頭で「前の曲」を押したら 1 つ戻る', () async {
