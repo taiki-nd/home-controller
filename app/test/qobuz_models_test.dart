@@ -53,4 +53,66 @@ void main() {
     expect(track.playlistTrackId, 7);
     expect(track.displayImageUrl, 'https://img/1_600.jpg');
   });
+
+  group('プレイリストのサムネ', _playlistImages);
+}
+
+/// プレイリストのサムネ。**`image` は来ない**ので、URL の配列を大きいほう
+/// から拾う。自分で作ったプレイリストには `image_rectangle` が付かない
+/// （キーが無いか空配列）ので、そこで諦めると一覧が全部のっぺらぼうになる。
+void _playlistImages() {
+  Map<String, dynamic> playlistJson(Map<String, dynamic> images) => {
+    'id': 10,
+    'name': 'お気に入り',
+    ...images,
+  };
+
+  test('編集部のプレイリストは横長の image_rectangle を使う', () {
+    final playlist = QobuzPlaylist.tryFrom(
+      playlistJson({
+        'image_rectangle': ['https://img/rect.jpg'],
+        'images300': ['https://img/300.jpg'],
+      }),
+    );
+
+    expect(playlist!.imageUrl, 'https://img/rect.jpg');
+  });
+
+  test('image_rectangle が空でも images300 まで落ちる', () {
+    final playlist = QobuzPlaylist.tryFrom(
+      playlistJson({
+        'image_rectangle': const [],
+        'images300': ['https://img/300.jpg'],
+        'images150': ['https://img/150.jpg'],
+        'images': ['https://img/50.jpg'],
+      }),
+    );
+
+    expect(playlist!.imageUrl, 'https://img/300.jpg');
+  });
+
+  test('自分のプレイリスト（rectangle 無し）でもサムネが出る', () {
+    final playlist = QobuzPlaylist.tryFrom(
+      playlistJson({
+        'images': ['https://img/50.jpg', 'https://img/50b.jpg'],
+      }),
+    );
+
+    expect(playlist!.imageUrl, 'https://img/50.jpg');
+  });
+
+  test('配列が空文字だけなら次のキーへ進む', () {
+    final playlist = QobuzPlaylist.tryFrom(
+      playlistJson({
+        'images300': const [''],
+        'images150': ['https://img/150.jpg'],
+      }),
+    );
+
+    expect(playlist!.imageUrl, 'https://img/150.jpg');
+  });
+
+  test('画像がまるごと無くても落ちない', () {
+    expect(QobuzPlaylist.tryFrom(playlistJson(const {}))!.imageUrl, isNull);
+  });
 }

@@ -276,16 +276,13 @@ class QobuzPlaylist {
     final ownerJson = owner is Map ? Map<String, dynamic>.from(owner) : null;
     final ownerId = (ownerJson?['id'] as num?)?.toInt();
     final tracks = json['tracks'];
-    final images = json['image_rectangle'];
     return QobuzPlaylist(
       id: id,
       name: json['name'] as String? ?? '',
       description: json['description'] as String?,
       owner: ownerJson?['name'] as String?,
       tracksCount: (json['tracks_count'] as num?)?.toInt() ?? 0,
-      imageUrl: images is List && images.isNotEmpty
-          ? images.first as String?
-          : _imageOf(json),
+      imageUrl: _playlistImageOf(json),
       isOwner: ownerUserId != null && ownerId == ownerUserId,
       tracks: tracks is Map ? _tracks(tracks['items']) : const [],
     );
@@ -464,6 +461,35 @@ String? _imageOf(Map<String, dynamic> json) {
   }
   if (image is String && image.isNotEmpty) return image;
   return null;
+}
+
+/// プレイリストのサムネ。
+///
+/// **プレイリストには `image` が来ない。** 代わりに複数のキーに URL の配列が
+/// 入る。編集部が作ったものには横長の `image_rectangle` が付くが、自分で
+/// 作ったプレイリストには付かない（キー自体が無いか、空配列）。そちらは
+/// 収録アルバムのジャケットを並べた `images300` / `images150` / `images`
+/// （それぞれ 300 / 150 / 50px）だけが入る。
+///
+/// 以前は `image_rectangle` しか見ずに、外れたら `image` を探しにいって
+/// いたので、**自分のプレイリストのサムネがまるごと出なかった**。
+/// 大きいほうから順に落として、最後の保険で `image` を見る。
+String? _playlistImageOf(Map<String, dynamic> json) {
+  for (final key in const [
+    'image_rectangle',
+    'images300',
+    'images150',
+    'images',
+  ]) {
+    final value = json[key];
+    if (value is List) {
+      for (final url in value) {
+        if (url is String && url.isNotEmpty) return url;
+      }
+    }
+    if (value is String && value.isNotEmpty) return value;
+  }
+  return _imageOf(json);
 }
 
 /// 再生画面のアートワーク用。`large`（600px）だけを見る。
