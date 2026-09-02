@@ -8,7 +8,7 @@
 SPOTIFY_CLIENT_ID ?=
 
 # music (Spotify) 側を出すか。docs/release-strategy.md §3。
-#   手元・ios-test-v* → true / ios-v*(App Store 公開) → false
+#   手元・内輪配布 → true / App Store 公開ビルド → false（make ios-ship ENABLE_MUSIC=false）
 # 既定を true にしているのは、手元の make app-run を今までどおり動かすため。
 # **実行時トグルにはしない**（審査後に機能を有効化する形はガイドライン 2.3.1）。
 ENABLE_MUSIC ?= true
@@ -74,33 +74,14 @@ app-doctor: ## flutter doctor
 	flutter doctor
 
 # ---------------------------------------------------------------------------
-# App リリースタグ (タグ push で .github/workflows の CI が発火)
-#   ios-v*      → iOS CI (TestFlight)
-#   ios-test-v* → iOS CI (TestFlight・反復用の系統分離。中身は ios-v* と同じ)
-#   TestFlight の Internal Testing 止まり。App Review は不要（設計メモ §11）。
-#   反復は ios-test-v* を使い、本番候補だけ ios-v* を打つ。
-# ---------------------------------------------------------------------------
-
-ios-tag-%: ## ios-vX.Y.Z を打って push → CI が TestFlight へ (例: make ios-tag-1.0.0)
-	git tag ios-v$* && git push origin ios-v$*
-ios-untag-%: ## ios-vX.Y.Z をローカル/リモートから削除
-	git tag -d ios-v$* && git push origin :ios-v$*
-ios-retag-%: ## ios-vX.Y.Z を打ち直して CI 再実行
-	git tag -d ios-v$* && git push origin :ios-v$* && git tag ios-v$* && git push origin ios-v$*
-
-ios-test-tag-%: ## ios-test-vX.Y.Z を打って push → CI が TestFlight へ (反復用)
-	git tag ios-test-v$* && git push origin ios-test-v$*
-ios-test-untag-%: ## ios-test-vX.Y.Z をローカル/リモートから削除
-	git tag -d ios-test-v$* && git push origin :ios-test-v$*
-ios-test-retag-%: ## ios-test-vX.Y.Z を打ち直して CI 再実行
-	git tag -d ios-test-v$* && git push origin :ios-test-v$* && git tag ios-test-v$* && git push origin ios-test-v$*
-
-# ---------------------------------------------------------------------------
-# ローカルからの TestFlight 配信（CI が使えないときの手動フォールバック）
+# ローカルからの TestFlight 配信（これが唯一の配信経路）
 #   前提: Apple Distribution 証明書がキーチェーンにあり、
 #         auth/home-ctl_AppStore.mobileprovision を
 #         ~/Library/MobileDevice/Provisioning Profiles/ に配置済みであること。
-#   例: make ios-ship SPOTIFY_CLIENT_ID=xxxx ASC_ISSUER_ID=xxxx BUILD_NUMBER=2
+#   例: make ios-ship SPOTIFY_CLIENT_ID=xxxx ASC_ISSUER_ID=xxxx \
+#           BUILD_NAME=1.0.29 BUILD_NUMBER=38
+#   TestFlight の Internal Testing 止まり。App Review は不要（設計メモ §11）。
+#   ビルド番号は自分で決める。App Store Connect の既存ビルドより大きい数にすること。
 # ---------------------------------------------------------------------------
 
 # pod install は LANG が C のままだと installation_root の unicode_normalize で
@@ -111,14 +92,29 @@ ios-build: ## Generated.xcconfig と Pods を用意する
 		--build-name=$(BUILD_NAME) --build-number=$(BUILD_NUMBER) $(DART_DEFINES)
 	cd app/ios && LANG=en_US.UTF-8 pod install
 
+# 公開ビルド (ENABLE_MUSIC=false) からは `UIBackgroundModes: audio` を抜く（issue #8）。
+# この宣言は QOBUZ でキューを進めるための無音キープアライブ用で、music を落とした
+# ビルドには QOBUZ 自体が入らない。**音を出さないアプリが audio を宣言している状態は
+# 審査で刺さる。** Info.plist の配列は xcconfig で条件分岐できないので、archive の
+# 前に抜いて後で戻す（使い捨ての CI と違い、手元では戻さないと差分が残る）。
 ios-archive: ios-build ## Runner.xcarchive を作る（手動署名）
+	@if [ "$(ENABLE_MUSIC)" != "true" ]; then \
+		cp app/ios/Runner/Info.plist app/ios/Runner/Info.plist.bak && \
+		/usr/libexec/PlistBuddy -c "Delete :UIBackgroundModes" app/ios/Runner/Info.plist && \
+		echo "UIBackgroundModes を外しました (公開ビルド)"; \
+	fi
 	cd app && rm -rf build/Runner.xcarchive && xcodebuild archive \
 		-workspace ios/Runner.xcworkspace \
 		-scheme Runner \
 		-configuration Release \
 		-destination 'generic/platform=iOS' \
 		-archivePath build/Runner.xcarchive \
-		PROFILE_NAME="$(PROFILE_NAME)"
+		PROFILE_NAME="$(PROFILE_NAME)"; \
+	status=$$?; \
+	if [ -f ios/Runner/Info.plist.bak ]; then \
+		mv ios/Runner/Info.plist.bak ios/Runner/Info.plist; \
+	fi; \
+	exit $$status
 
 ios-export: ## .ipa に書き出す（ExportOptions.plist は書き換えて戻す）
 	cd app && /usr/libexec/PlistBuddy \

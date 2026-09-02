@@ -3,7 +3,10 @@
 home-ctl を一般公開するにあたっての、ブランチ・タグ・機能フラグの運用方針。
 
 - 作成日: 2026-08-04
-- 対象: `main` / `.github/workflows/ios-testflight.yml` / `makefile`
+- 対象: `main` / `makefile`
+- 2026-09-02: **GitHub Actions での配信をやめた。** `.github/workflows/ios-testflight.yml`
+  とタグ用の make ターゲット（`ios-tag-*` / `ios-test-tag-*`）を削除し、配信は手元の
+  `make ios-ship` 1 本にした（§7）
 - 前提: **v1 系 = home-ctl 本体（Home Assistant 連携）／ Spotify は v2 で公開**
 
 ---
@@ -13,9 +16,9 @@ home-ctl を一般公開するにあたっての、ブランチ・タグ・機�
 | # | やること | 場所 | 済 |
 |---|---|---|---|
 | 1 | ~~`ENABLE_MUSIC` フラグを実装（§3）~~ | `app/lib/services/app_flags.dart` | ✅ |
-| 2 | ~~CI にタグ prefix → フラグの分岐を足す（§4）~~ | `.github/workflows/ios-testflight.yml` | ✅ |
+| 2 | ~~CI にタグ prefix → フラグの分岐を足す（§4）~~ CI ごと廃止 | ~~`.github/workflows/ios-testflight.yml`~~ | ✅ |
 | 3 | ~~`makefile` に `ENABLE_MUSIC ?= true` を足す（§4）~~ | `makefile` | ✅ |
-| 4 | ~~`SPOTIFY_CLIENT_ID` 必須チェックを条件付きにする（§4）~~ | 同 workflow | ✅ |
+| 4 | ~~`SPOTIFY_CLIENT_ID` 必須チェックを条件付きにする（§4）~~ 同上 | ~~同 workflow~~ | ✅ |
 | 5 | v1.0.0 の中身を Milestone + Issue に起こす（§2） | GitHub | |
 | 6 | Spotify の extended quota を申請（§5） | Spotify Developer Dashboard | |
 
@@ -26,7 +29,7 @@ home-ctl を一般公開するにあたっての、ブランチ・タグ・機�
 | | やること |
 |---|---|
 | ブランチ | **`main` 1 本。** 作業は短命の `feat/xxx` を切って PR → squash merge → 削除 |
-| バージョン | **タグで表す**（`ios-v1.0.0`）。ブランチ名には入れない |
+| バージョン | **`app/pubspec.yaml` の `version:` と `make ... BUILD_NAME=` で表す。** ブランチ名には入れない（配った印としてタグを打つのは任意） |
 | v1.1.0 の中身 | **ブランチではなく GitHub Milestone + Issue** |
 | Spotify の出し分け | **ブランチではなくコンパイル時フラグ**（`--dart-define=ENABLE_MUSIC`） |
 | 長期ブランチ | 原則作らない。**例外は §6 の hotfix のみ** |
@@ -34,7 +37,7 @@ home-ctl を一般公開するにあたっての、ブランチ・タグ・機�
 ```
 main ──●──●──●──●──●──●──●──▶
        │        │        │
-   feat/ha-   feat/home- ios-v1.0.0（タグ）
+   feat/ha-   feat/home- ここで make ios-ship（配信）
    client     tiles
 ```
 
@@ -42,13 +45,13 @@ main ──●──●──●──●──●──●──●──▶
 
 ## 2. なぜ `feature/v1.0.0` のような長期ブランチにしないか
 
-### 2-1. バージョンの正はすでにタグ側にある
+### 2-1. バージョンの正はブランチの外にある
 
-`ios-testflight.yml` は `ios-v*` / `ios-test-v*` のタグ push で起動し、
-**タグ名から `--build-name` を切り出している**（`name="${GITHUB_REF_NAME##*v}"`）。
-`ios-test-v1.0.8` まで実績もある。
+配信時のバージョン名は `make ios-ship BUILD_NAME=1.0.29` で渡し、`app/pubspec.yaml` の
+`version:` を同じ番号に合わせておく（CI を使っていた頃はタグ名から `--build-name` を
+切り出していた）。
 
-ここでブランチ名にもバージョンを持たせると、**同じ番号を 2 か所で管理**することになる。
+ここでブランチ名にもバージョンを持たせると、**同じ番号を 3 か所で管理**することになる。
 
 ### 2-2. v2 に隔離した Spotify コードが確実に腐る（これが決定的）
 
@@ -95,17 +98,14 @@ App Store のガイドライン **2.3.1（隠し機能）に抵触する。**
 
 ---
 
-## 4. タグの 2 系統でビルドを出し分ける
+## 4. `ENABLE_MUSIC` でビルドを出し分ける
 
-workflow のコメントには `ios-test-v*` は「反復用。中身は同じ。系統を分けるための
-プレフィックス」とあるが、**ここに差をつける。**
-
-| タグ | `ENABLE_MUSIC` | 用途 |
+| コマンド | `ENABLE_MUSIC` | 用途 |
 |---|---|---|
-| `ios-test-v1.0.9` | **true** | 自分・内輪用。TestFlight の Internal Testing で配る。**Spotify が使える** |
-| `ios-v1.0.0` | **false** | App Store 公開用。**これを審査に出す** |
+| `make ios-ship`（既定） | **true** | 自分・内輪用。TestFlight の Internal Testing で配る。**Spotify が使える** |
+| `make ios-ship ENABLE_MUSIC=false` | **false** | App Store 公開用。**これを審査に出す** |
 
-追加の運用は増えない。**打つタグを変えるだけ。**
+追加の運用は増えない。**渡す変数を変えるだけ。**
 
 成立する理由:
 
@@ -117,42 +117,25 @@ workflow のコメントには `ios-test-v*` は「反復用。中身は同じ�
 **`UIBackgroundModes: audio` も同じ扱いにする**（issue #8）。QOBUZ で別のアプリを
 開いてもキューを進めるために無音を鳴らし続けているが、`ENABLE_MUSIC=false` の
 ビルドには QOBUZ 自体が入らない。**音を出さないアプリが audio を宣言している
-だけの状態は審査で刺さる**ので、CI が公開ビルドの Info.plist からこのキーを
-`PlistBuddy -c Delete` で抜く（`Drop background audio mode from the public build`）。
-Info.plist の配列は xcconfig で条件分岐できないため、ビルド前の一手で処理している。
+だけの状態は審査で刺さる**ので、`make ios-archive` が `ENABLE_MUSIC != true` のとき
+このキーを `PlistBuddy -c Delete` で抜く。Info.plist の配列は xcconfig で条件分岐
+できないため、archive の前に抜いて後で必ず戻している（使い捨ての CI と違い、
+手元では戻さないと作業ツリーに差分が残る）。
 
-### CI の変更
-
-```yaml
-- name: Resolve flags
-  id: flags
-  run: |
-    if [[ "${GITHUB_REF_NAME}" == ios-test-v* ]]; then
-      echo "enable_music=true" >> "$GITHUB_OUTPUT"
-    else
-      echo "enable_music=false" >> "$GITHUB_OUTPUT"
-    fi
-```
-
-`Prepare Flutter iOS build config` の `flutter build ios` に
-`--dart-define=ENABLE_MUSIC=${{ steps.flags.outputs.enable_music }}` を足す。
-
-**同じ step の `SPOTIFY_CLIENT_ID` 必須チェック（未設定なら `exit 1`）を
-条件付きにすること。** `ENABLE_MUSIC=false` のときに Client ID を要求すると
-公開ビルドが通らない。
-
-`makefile` 側は `ENABLE_MUSIC ?= true` を既定にして `DART_DEFINES` に足す。
+`makefile` は `ENABLE_MUSIC ?= true` を既定にして `DART_DEFINES` に足している。
 **手元の `make app-run` は今までどおり Spotify が使える。**
+`ENABLE_MUSIC=false` のときは `SPOTIFY_CLIENT_ID` を渡さなくてよい。
 
-### ビルド番号は触らなくてよい
+### ビルド番号は自分で決める
 
-CI が `github.run_number + RUN_NUMBER_OFFSET` で採番しているので、
-**2 系統のタグが同じアプリレコード（`app.home-ctl`）に上がっても単調増加が
-自動で担保される。** 手動の付け替えは不要。
+`make ios-ship BUILD_NUMBER=N` の N は手で入れる。**`app/pubspec.yaml` の `+N` は
+使われない**（makefile が `--build-number` で上書きする）。
 
-「バージョン名は下がるのにビルド番号は上がる」という見た目になるが
-（`ios-test-v1.0.9` の次に `ios-v1.0.0` を出す場合など）、
-App Store Connect 的には問題ない。
+App Store Connect の既存ビルドより大きい数にすること。最後に上げた番号は
+ASC の TestFlight 画面か、`GET /v1/builds?filter[app]=…&sort=-uploadedDate` で確かめる。
+
+「バージョン名は下がるのにビルド番号は上がる」という見た目になっても
+（内輪版の次に公開版を出す場合など）、App Store Connect 的には問題ない。
 
 ---
 
@@ -166,9 +149,9 @@ App Store Connect 的には問題ない。
 承認待ちが理由**であり、**いつ下りるか読めない。**
 
 読めない待ち時間を長期ブランチで跨ぐのが、まさに §2-2 の腐らせるパターン。
-フラグなら**承認が下りた日にタグを打つだけ**で済む。
+フラグなら**承認が下りた日に配り直すだけ**で済む。
 
-内輪配布は 25 ユーザー枠に収まるので、申請前でも `ios-test-v*` は普通に使える。
+内輪配布は 25 ユーザー枠に収まるので、申請前でも `ENABLE_MUSIC=true` の配信は普通に使える。
 
 ---
 
@@ -183,20 +166,38 @@ App Store Connect 的には問題ない。
 
 ## 7. リリース手順
 
+**配信は手元から行う。CI（GitHub Actions）は使わない。**
+
 ```bash
 # 1. 作業
 git switch -c feat/ha-client
 # … 実装 …
 # PR → squash merge → ブランチ削除
 
-# 2. 手元・内輪に配る（Spotify 入り）
-git tag ios-test-v1.0.9 && git push origin ios-test-v1.0.9
+# 2. main を最新にして、pubspec の version: を配る番号に合わせてコミット
+git switch main && git pull
+cd app && flutter analyze && flutter test && cd ..
 
-# 3. 公開ビルド（home 単体）
-git tag ios-v1.0.0 && git push origin ios-v1.0.0
+# 3. 手元・内輪に配る（Spotify 入り）
+make ios-ship SPOTIFY_CLIENT_ID=xxxx ASC_ISSUER_ID=xxxx \
+     BUILD_NAME=1.0.29 BUILD_NUMBER=38
+
+# 4. 公開ビルド（home 単体）
+make ios-ship ASC_ISSUER_ID=xxxx ENABLE_MUSIC=false \
+     BUILD_NAME=1.1.0 BUILD_NUMBER=39
 # → TestFlight に上がったビルドを App Store Connect から審査に出す
 ```
 
-`app/pubspec.yaml` の `version:` は、タグ起動なら CI が `--build-name` で
-上書きするので必須ではないが、`workflow_dispatch` 時のフォールバックになるので
-リリース時に合わせて更新しておくとよい。
+`ios-ship` は `ios-archive` → `ios-export` → `ios-upload` の順に回るだけなので、
+**落ちた場所を見たいときは 3 つに分けて実行する。**
+
+`app/pubspec.yaml` の `version:` は `--build-name` に上書きされるが、
+`make app-run` など手元の起動では効くので、リリース時に合わせて更新しておく。
+
+### altool が終わらないとき
+
+`xcrun altool` が `WILL RETRY PART N. Checksums do not match.` を延々と繰り返して
+進まないことがある（2026-09-02 に発生。1 時間で 6000 回超のリトライ）。
+`~/Library/Logs/ContentDelivery/com.apple.itunes.altool/*Upload*.txt` の末尾で分かる。
+**待っても抜けないのでプロセスを落として `make ios-upload` をやり直す。**
+やり直すと 45 秒で上がった。
