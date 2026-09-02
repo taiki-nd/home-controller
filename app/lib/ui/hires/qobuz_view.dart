@@ -225,7 +225,7 @@ class _TabletBody extends StatelessWidget {
             topInset: topInset,
             onSeek: controller.controlsEnabled ? controller.seek : null,
             transport: _Transport(controller: controller, compact: false),
-            tabs: _Tabs(controller: controller),
+            tabs: _Tabs(controller: controller, compact: false),
             panel: _PanelBody(
               controller: controller,
               onAskPlay: onAskPlay,
@@ -359,7 +359,7 @@ class _SheetBody extends StatelessWidget {
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(18, 2, 18, 12),
-          child: _Tabs(controller: controller),
+          child: _Tabs(controller: controller, compact: true),
         ),
         Expanded(
           child: Padding(
@@ -384,36 +384,35 @@ class _SheetBody extends StatelessWidget {
 
 /// Up next / Library / Add tracks。
 ///
-/// **文言も並びも music の [RailTabs] に合わせる。** 音源を切り替えても
-/// 同じ言葉が同じ順で並んでいないと、壁掛けでは別のアプリに見える。
-/// 「Search」ではなく「Add tracks」なのは、ここが探す場所ではなく
-/// **積む場所**だから（music 側と同じ理由）。
+/// **文言も並びも見た目も music の [RailTabs] に合わせる。** 音源を切り替えても
+/// 同じ言葉が同じ順で並んでいないと、壁掛けでは別のアプリに見える。言葉は
+/// [TabLabel]、器は [SegmentedTabs] と、どちらも music と同じものを使う。
 class _Tabs extends StatelessWidget {
-  const _Tabs({required this.controller});
+  const _Tabs({required this.controller, required this.compact});
 
   final QobuzController controller;
+
+  /// スマホ。music の `RailTabs` と同じく短いほうの文言にする。
+  final bool compact;
+
+  /// `QobuzTab` に値を足すとここがコンパイルエラーになる。
+  static TabLabel _labelOf(QobuzTab tab) => switch (tab) {
+    QobuzTab.queue => TabLabel.upNext,
+    QobuzTab.library => TabLabel.library,
+    QobuzTab.search => TabLabel.addTracks,
+  };
 
   @override
   Widget build(BuildContext context) {
     return SegmentedTabs(
       tabs: [
-        TabButton(
-          // 文言は `RailTabs.defaultLabel` と同じもの。あちらは `RailTab`、
-          // こちらは `QobuzTab` と持ち物が違うので、共有するのは言葉だけ。
-          label: 'Up next',
-          active: controller.tab == QobuzTab.queue,
-          onTap: () => controller.selectTab(QobuzTab.queue),
-        ),
-        TabButton(
-          label: 'Library',
-          active: controller.tab == QobuzTab.library,
-          onTap: () => controller.selectTab(QobuzTab.library),
-        ),
-        TabButton(
-          label: 'Add tracks',
-          active: controller.tab == QobuzTab.search,
-          onTap: () => controller.selectTab(QobuzTab.search),
-        ),
+        // 並びは `QobuzTab` の宣言順＝music の `RailTab` と同じ順。
+        for (final tab in QobuzTab.values)
+          TabButton(
+            label: _labelOf(tab).text(compact: compact),
+            active: controller.tab == tab,
+            onTap: () => controller.selectTab(tab),
+          ),
       ],
     );
   }

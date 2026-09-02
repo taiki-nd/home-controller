@@ -243,11 +243,8 @@ class _SheetBody extends StatelessWidget {
           child: RailTabs(
             selected: controller.tab,
             onSelect: controller.selectTab,
-            // 4 タブぶんの幅しかないので、スマホだけ短くする。
-            labels: const {
-              RailTab.search: 'Add',
-              RailTab.playlists: 'Lists',
-            },
+            // 4 タブぶんの幅しかないので、スマホだけ短い文言にする。
+            compact: true,
           ),
         ),
         Expanded(

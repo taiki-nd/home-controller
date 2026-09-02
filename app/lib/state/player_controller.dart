@@ -15,9 +15,9 @@ export 'playback_surface.dart' show ArtworkPalette, PlaybackSurface;
 
 /// 右レール / ボトムシートのタブ。
 ///
-/// **[RailTabs] は宣言順に `labels` を index で引く。** 並びを変えたり足したり
-/// したら、あちらの labels も同じ順で直すこと。
-enum RailTab { queue, search, playlists, newReleases }
+/// **宣言順がそのまま表示順。** QOBUZ の `QobuzTab` も同じ並びにしてあるので
+/// （New は QOBUZ に無いぶんが抜けるだけ）、ここを触ったら向こうも直す。
+enum RailTab { queue, playlists, search, newReleases }
 
 /// アプリの唯一のコントローラ。
 ///

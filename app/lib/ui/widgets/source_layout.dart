@@ -397,8 +397,9 @@ class SourceSheet extends StatelessWidget {
   static const closedHeight = 116.0;
 
   /// 中身が縮まずに入る最小の高さ。
-  /// タブの段 58 + パネルの見出し 44 + 余白 で、リストが 0 行でも溢れない値。
-  static const _minBodyHeight = 150.0;
+  /// タブの段（[SegmentedTabs.height] + 上下の余白 14）+ パネルの見出し 44 +
+  /// 余白 で、リストが 0 行でも溢れない値。
+  static const _minBodyHeight = SegmentedTabs.height + 14 + 44 + 44;
 
   @override
   Widget build(BuildContext context) {

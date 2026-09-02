@@ -259,71 +259,142 @@ class _PlayButton extends StatelessWidget {
   }
 }
 
-/// 右レール / ボトムシート上部のタブ。
+/// タブの文言。**音源で変えない。**
 ///
-/// ラベルは index ではなく [RailTab] で引く。[RailTab] に値を足したら
-/// [defaultLabel] の switch がコンパイルエラーになるので、付け忘れができない。
-/// 幅の狭いスマホだけ [labels] で短い文言に差し替える。
+/// 壁掛けで音源を切り替えたときに、同じ場所の言葉だけ入れ替わると別のアプリに
+/// 見える。music（[RailTab]）と QOBUZ（`QobuzTab`）は持ち物が違うので enum は
+/// 分けたままだが、そこに載せる言葉はここ 1 か所から出す。
+///
+/// 「Search」ではなく「Add tracks」なのは、ここが探す場所ではなく**積む場所**
+/// だから。「Playlists」ではなく「Library」なのは、QOBUZ 側にお気に入りの
+/// アルバムも並ぶから。
+enum TabLabel {
+  upNext('Up next', 'Up next'),
+  library('Library', 'Lists'),
+  addTracks('Add tracks', 'Add'),
+  newReleases('New', 'New');
+
+  const TabLabel(this.full, this.short);
+
+  final String full;
+
+  /// スマホ用。iPhone の幅（390）に 4 つ並べると [full] は入らない。
+  /// iPad と言葉が変わるのは承知の上で、はみ出すよりましと判断している。
+  final String short;
+
+  String text({required bool compact}) => compact ? short : full;
+}
+
+/// 右レール / ボトムシート上部のタブ（music）。
+///
+/// 並びは [RailTab] の宣言順、文言は [TabLabel]、見た目は [SegmentedTabs]。
+/// QOBUZ 側（`QobuzView` の `_Tabs`）も後ろ 2 つを使うので、片方だけ違う言葉・
+/// 違う見た目になることがない。
 class RailTabs extends StatelessWidget {
   const RailTabs({
     super.key,
     required this.selected,
     required this.onSelect,
-    this.labels,
+    this.compact = false,
   });
 
   final RailTab selected;
   final ValueChanged<RailTab> onSelect;
 
-  /// 差し替えたいものだけ入れる。無いものは [defaultLabel]。
-  final Map<RailTab, String>? labels;
+  /// スマホ。短いほうの文言を使う。
+  final bool compact;
 
-  static String defaultLabel(RailTab tab) => switch (tab) {
-    RailTab.queue => 'Up next',
-    RailTab.search => 'Add tracks',
-    RailTab.playlists => 'Playlists',
-    RailTab.newReleases => 'New',
+  /// [RailTab] に値を足すとここがコンパイルエラーになるので、付け忘れができない。
+  static TabLabel labelOf(RailTab tab) => switch (tab) {
+    RailTab.queue => TabLabel.upNext,
+    RailTab.playlists => TabLabel.library,
+    RailTab.search => TabLabel.addTracks,
+    RailTab.newReleases => TabLabel.newReleases,
   };
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        for (final (index, tab) in RailTab.values.indexed) ...[
-          if (index > 0) const SizedBox(width: 6),
-          Expanded(
-            child: TabButton(
-              label: labels?[tab] ?? defaultLabel(tab),
-              active: selected == tab,
-              onTap: () => onSelect(tab),
-            ),
+    return SegmentedTabs(
+      tabs: [
+        for (final tab in RailTab.values)
+          TabButton(
+            label: labelOf(tab).text(compact: compact),
+            active: selected == tab,
+            onTap: () => onSelect(tab),
           ),
-        ],
       ],
     );
   }
 }
 
-/// タブの並び。**音源に依らない形**——Spotify は [RailTab]、Qobuz は
+/// タブの見た目。**音源に依らない形**——Spotify は [RailTab]、Qobuz は
 /// `QobuzTab` と持ち物が違うので、共有するのは見た目だけにする。
+///
+/// 押しボタンが並んでいるのではなく、1 枚の台座の上をつまみが滑る形にしてある。
+/// ボタン列だと「今どこにいるか」が選択中の面の有無でしか分からず、切り替えの
+/// 途中が無いので、押した先へ移った感じが出ない。
+///
+/// つまみは選ぶたびに位置が変わるので、壁掛けでも同じ場所に焼きつかない。
+/// 台座は出しっぱなしになるが、白 5% の角丸で、輝度一定の細い線は使っていない。
 class SegmentedTabs extends StatelessWidget {
   const SegmentedTabs({super.key, required this.tabs});
 
   final List<TabButton> tabs;
 
+  /// 台座の縁とつまみの間。
+  static const _inset = 4.0;
+
+  /// つまみが滑りきるまで。指を離してから追いつく速さ。
+  static const _slide = Duration(milliseconds: 220);
+
+  /// 台座ぶんを含めた段の高さ。中身の最小高さを決めるときに使う。
+  static const height = kMinTapTarget + _inset * 2;
+
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        for (final (index, tab) in tabs.indexed) ...[
-          if (index > 0) const SizedBox(width: 6),
-          Expanded(child: tab),
-        ],
-      ],
+    final selected = tabs.indexWhere((tab) => tab.active);
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: AppColors.white(0.05),
+        borderRadius: AppRadius.row,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(_inset),
+        child: Stack(
+          children: [
+            // つまみ。Row より先に置いて下に敷く（タップは上の Row が取る）。
+            if (selected >= 0)
+              Positioned.fill(
+                child: AnimatedAlign(
+                  duration: _slide,
+                  curve: Curves.easeOutCubic,
+                  // 等幅なので、左端 -1 から右端 +1 を等分した位置。
+                  alignment: Alignment(
+                    tabs.length < 2 ? 0 : -1 + 2 * selected / (tabs.length - 1),
+                    0,
+                  ),
+                  child: FractionallySizedBox(
+                    widthFactor: 1 / tabs.length,
+                    heightFactor: 1,
+                    child: const DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Color(0x24FFFFFF),
+                        borderRadius: AppRadius.thumb,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            Row(children: [for (final tab in tabs) Expanded(child: tab)]),
+          ],
+        ),
+      ),
     );
   }
 }
 
+/// [SegmentedTabs] の 1 区画。面は持たない（つまみが台座の側にあるので）。
 class TabButton extends StatelessWidget {
   const TabButton({
     super.key,
@@ -339,15 +410,15 @@ class TabButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: active ? AppColors.white(0.12) : Colors.transparent,
-      borderRadius: AppRadius.row,
+      color: Colors.transparent,
+      borderRadius: AppRadius.thumb,
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
         child: Container(
           height: kMinTapTarget,
           alignment: Alignment.center,
-          padding: const EdgeInsets.symmetric(horizontal: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 6),
           child: Text(
             label,
             maxLines: 1,
